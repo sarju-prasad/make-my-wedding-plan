@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A second push to the same branch/PR cancels the still-running check for the
+# previous one — no point finishing a CI run for a commit that's already stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, format, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test (with coverage)
+        run: npm run test:coverage
+
+      - name: Validate OpenAPI spec is generated and up to date
+        # Unlike the test step (tests/setup/global-setup.ts provisions its own
+        # env vars), this script imports config/env.ts directly and needs a
+        # complete, validly-shaped environment to get past env.ts's boot-time
+        # parse — even though spec generation itself only reads APP_BASE_URL.
+        # Values below are placeholders; nothing here connects to a real
+        # database or third-party service.
+        run: npm run openapi:validate
+        env:
+          APP_BASE_URL: http://localhost:4000
+          WEB_BASE_URL: http://localhost:3000
+          MONGODB_URI: mongodb://localhost:27017
+          MONGODB_DB_NAME: ci-openapi-check
+          JWT_ACCESS_SECRET: ci-openapi-check-access-secret-000000000000
+          JWT_REFRESH_SECRET: ci-openapi-check-refresh-secret-00000000000
+
+      - name: Build
+        run: npm run build

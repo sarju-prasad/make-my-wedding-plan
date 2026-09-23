@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test output
+coverage/
+.vitest/
+
+# Environment — never commit real secrets. .env.example is the tracked template.
+.env
+.env.*
+!.env.example
+
+# Platform
+.vercel/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Local scratch
+tmp/
+.cache/

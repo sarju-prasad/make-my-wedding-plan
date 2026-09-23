@@ -1,0 +1,19 @@
+# Normalise line endings. Development happens on Windows, CI and Vercel build on
+# Linux, and Prettier is configured with endOfLine: "lf" — without this, the first
+# cross-platform checkout produces whole-file CRLF diffs.
+* text=auto eol=lf
+
+# Binary assets — never normalise or diff these.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.docx   binary
+*.zip    binary
+
+# Generated — collapse in pull request diffs.
+package-lock.json linguist-generated=true -diff
+openapi.json      linguist-generated=true

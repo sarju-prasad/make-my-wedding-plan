@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    /* Language and environment */
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    /* Modules — NodeNext + package.json "imports" subpath aliases.
+       `customConditions: ["development"]` makes the editor resolve #* to ./src/*
+       rather than the compiled ./dist/*. */
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "customConditions": ["development"],
+    "resolveJsonModule": true,
+
+    /* Emit — this config type-checks only; tsconfig.build.json emits. */
+    "noEmit": true,
+    "sourceMap": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": false,
+
+    /* Interop and checks */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "api/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "dist", "coverage"]
+}

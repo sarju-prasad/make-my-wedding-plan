@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.vercel/
+
+# Design documents are the source of truth and are kept byte-for-byte as authored.
+doc/
+
+# Generated artefacts
+openapi.json
+*.tsbuildinfo
+package-lock.json
