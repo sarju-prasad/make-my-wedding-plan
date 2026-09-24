@@ -11,8 +11,10 @@ platform for Indian weddings. This repo is an **npm-workspaces monorepo**:
   Has its own [backend/CLAUDE.md](backend/CLAUDE.md) with backend-specific
   rules, stack decisions, and open questions — read it before touching
   anything under `backend/`.
-- [`frontend/`](frontend) — Next.js app. Will have its own `frontend/CLAUDE.md`
-  once it exists.
+- [`frontend/`](frontend) — Next.js app. Has its own
+  [frontend/CLAUDE.md](frontend/CLAUDE.md) — read it before touching
+  anything under `frontend/`. Only the public landing page exists so far,
+  and it's a first draft (see that file for what that means).
 - [`doc/`](doc) — the four source-of-truth design documents both workspaces
   answer to (PRD, DB design, API design, system architecture). Never edit,
   rename, or reformat these.
@@ -42,3 +44,8 @@ For anything backend-related, read [backend/CLAUDE.md](backend/CLAUDE.md)
 first — it has the real stack decisions, architecture rules, things that will
 bite, and the list of open product/design decisions blocking specific
 features.
+
+For anything frontend-related, read
+[frontend/CLAUDE.md](frontend/CLAUDE.md) first — it covers the Next.js 16 /
+Tailwind v4 stack decisions, what's real versus draft in the current
+homepage, and things that will bite.
