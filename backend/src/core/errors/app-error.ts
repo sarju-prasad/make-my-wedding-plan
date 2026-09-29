@@ -75,6 +75,11 @@ export class AppError extends Error {
     });
   }
 
+  /** api_design.docx §5.2 — a more specific 409 than duplicate() for the one endpoint that names it. */
+  static emailAlreadyExists(message = 'An account with this email already exists.'): AppError {
+    return new AppError({ code: ErrorCode.EMAIL_ALREADY_EXISTS, httpStatus: 409, message });
+  }
+
   static rateLimited(message = 'Too many requests. Please try again later.'): AppError {
     return new AppError({ code: ErrorCode.RATE_LIMITED, httpStatus: 429, message });
   }

@@ -8,14 +8,19 @@
  * "document that route" a single atomic step, so one can't be done without
  * the other.
  *
- * Modules are added in the order given by api_design.docx §25. The scaffold
- * mounts only `health`.
+ * Modules are added in the order given by api_design.docx §25.
  */
 import { Router } from 'express';
 
+import { authRouter } from '../modules/auth/auth.routes.js';
+import '../modules/auth/auth.openapi.js';
 import { healthRouter } from '../modules/health/health.routes.js';
 import '../modules/health/health.openapi.js';
+import { weddingsRouter } from '../modules/weddings/weddings.routes.js';
+import '../modules/weddings/weddings.openapi.js';
 
 export const v1Router: Router = Router();
 
 v1Router.use(healthRouter);
+v1Router.use(authRouter);
+v1Router.use(weddingsRouter);

@@ -1,18 +1,21 @@
 import Image from "next/image";
+import Link from "next/link";
 import logoWordmark from "../../../public/images/logo-wordmark.png";
 import { Icon } from "./Icon";
 
 /**
- * Nav items and CTAs all link to `#` in the real Stitch export — it's a
+ * Every nav item and CTA links to `#` in the real Stitch export — it's a
  * design-tool preview, not a wired app, so it never assigned real routes.
- * Kept literal rather than guessed at real hrefs.
+ * Kept literal rather than guessed at real hrefs, except `sign-in` and the
+ * `plan-your-wedding` CTA below: those two now have real pages
+ * (src/app/sign-in, src/app/sign-up) to point at.
  */
 const NAV_LINKS = [
-  { path: "how-it-works", label: "How it works" },
-  { path: "features", label: "Features" },
-  { path: "planning-suite", label: "Planning Suite" },
-  { path: "privacy", label: "Privacy" },
-  { path: "sign-in", label: "Sign in" },
+  { path: "how-it-works", label: "How it works", href: "#" },
+  { path: "features", label: "Features", href: "#" },
+  { path: "planning-suite", label: "Planning Suite", href: "#" },
+  { path: "privacy", label: "Privacy", href: "#" },
+  { path: "sign-in", label: "Sign in", href: "/sign-in" },
 ] as const;
 
 export function Header() {
@@ -37,25 +40,25 @@ export function Header() {
 
         <nav className="hidden items-center gap-space-lg lg:flex">
           {NAV_LINKS.map((link) => (
-            <a
+            <Link
               key={link.path}
-              href="#"
+              href={link.href}
               data-path={link.path}
               className="font-label-lg text-label-lg text-on-surface-variant transition-colors hover:text-on-surface"
             >
               {link.label}
-            </a>
+            </Link>
           ))}
         </nav>
 
         <div className="flex items-center gap-space-md">
-          <a
-            href="#"
+          <Link
+            href="/sign-up"
             data-path="plan-your-wedding"
             className="hidden items-center justify-center rounded-lg bg-primary-container px-space-md py-space-sm font-label-lg text-label-lg text-on-primary shadow-[0_1px_3px_rgba(26,25,23,0.03)] transition-all hover:bg-secondary sm:inline-flex"
           >
             Plan your wedding
-          </a>
+          </Link>
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary">
             <Icon name="person" className="text-[18px] text-on-primary" />
           </div>

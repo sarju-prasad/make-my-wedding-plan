@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Icon } from "./Icon";
 
 export function FinalCta() {
@@ -18,19 +19,19 @@ export function FinalCta() {
           </p>
         </div>
         <div className="flex w-full flex-col items-center justify-center gap-space-md sm:w-auto sm:flex-row">
-          <a
-            href="#"
+          <Link
+            href="/sign-up"
             className="inline-flex w-full items-center justify-center rounded-lg bg-primary-container px-space-xl py-space-sm font-label-lg text-label-lg text-on-primary shadow-sm transition-all hover:bg-secondary sm:w-auto"
           >
             <span>Plan your wedding</span>
             <Icon name="arrow_forward" className="ml-2 text-[18px]" />
-          </a>
-          <a
-            href="#"
+          </Link>
+          <Link
+            href="/sign-in"
             className="inline-flex w-full items-center justify-center rounded-lg bg-surface-container-high px-space-lg py-space-sm font-label-lg text-label-lg text-on-surface transition-all hover:bg-surface-container sm:w-auto"
           >
             <span>Sign in to existing wedding</span>
-          </a>
+          </Link>
         </div>
         <div className="flex items-center gap-space-xs pt-space-xs font-label-sm text-label-sm text-on-surface-variant">
           <Icon name="verified" className="text-[16px] text-primary" />

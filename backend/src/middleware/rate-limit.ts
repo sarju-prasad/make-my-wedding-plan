@@ -37,8 +37,14 @@ export interface RateLimitPolicy {
 
 export const RATE_LIMIT_POLICIES = {
   'auth:login': { points: 10, duration: 60, blockDuration: 300 },
+  // Generous relative to login/register: a legitimate client calls this
+  // routinely (access tokens expire every 15 min, and multiple tabs/devices
+  // for one user each refresh independently), but it still does a real
+  // User.findById() per call and had no throttling at all before this.
+  'auth:refresh': { points: 20, duration: 60, blockDuration: 300 },
   'auth:register': { points: 5, duration: 60, blockDuration: 300 },
   'auth:forgot-password': { points: 5, duration: 300, blockDuration: 900 },
+  'auth:reset-password': { points: 10, duration: 300, blockDuration: 900 },
   'guest:validate': { points: 20, duration: 60, blockDuration: 300 },
   'photo:upload-urls': { points: 30, duration: 60, blockDuration: 120 },
   'email:send': { points: 20, duration: 60, blockDuration: 300 },

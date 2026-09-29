@@ -24,7 +24,19 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${playfairDisplay.variable} ${plusJakartaSans.variable}`}>
+    <html
+      lang="en"
+      className={`${playfairDisplay.variable} ${plusJakartaSans.variable}`}
+      // Browser extensions (e.g. an Ember-inspector-style devtool injecting
+      // data-ember-extension, ColorZilla injecting cz-shortcut-listen on
+      // <body> below) add attributes to <html>/<body> before React
+      // hydrates. React correctly flags the mismatch since it can't know
+      // the difference from a real bug — suppressHydrationWarning is React's
+      // own documented escape hatch for exactly this "injected by something
+      // outside my control" case. Scoped to just these two tags, so it
+      // won't hide a real mismatch anywhere else in the tree.
+      suppressHydrationWarning
+    >
       <head>
         {/* Material Symbols Outlined — the icon font the Stitch export uses
             via `<span class="material-symbols-outlined">`. Loaded the same
@@ -35,7 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-full antialiased">{children}</body>
+      <body className="min-h-full antialiased" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

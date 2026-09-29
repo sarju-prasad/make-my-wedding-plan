@@ -6,8 +6,16 @@
  *
  * api_design.docx §5:
  *   - Access cookie path: /
- *   - Refresh cookie path: /api/v1/auth   (least privilege — only the
- *     refresh/logout endpoints ever need to see this cookie)
+ *   - Refresh cookie path: /api/v1/auth — exactly what the doc specifies,
+ *     verbatim. This is coarser than "least privilege" for the refresh
+ *     cookie might suggest: cookie `Path` only does prefix matching, and
+ *     every `/auth/*` route (register, login, me, forgot/reset-password)
+ *     shares this same prefix, so the browser attaches the refresh cookie
+ *     to all of them, not just /auth/refresh and /auth/logout — there's no
+ *     narrower Path that still covers just those two without restructuring
+ *     the endpoint paths themselves, which the doc fixes. Still meaningfully
+ *     narrower than Path=/ (excludes every wedding-scoped and future
+ *     non-auth route), just not as narrow as "only refresh/logout".
  *   - SameSite: Lax initially; Secure: true in production; Domain omitted
  *     for host-only cookies.
  * api_design.docx §6.2: the guest invitation token is exchanged for a

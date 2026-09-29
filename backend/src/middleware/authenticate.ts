@@ -1,29 +1,38 @@
 /**
- * STUB — authentication is not implemented yet.
+ * Verifies the access-token cookie and sets `req.userId`. Deliberately
+ * stateless — no DB round trip on every request (see modules/auth/auth.tokens.ts):
+ * the access token is short-lived (15 min) and a tokenVersion bump takes
+ * effect the next time the client refreshes, per api_design.docx §5.4.
  *
- * This exists so route files for future modules can be written against the
- * final signature and import path today (`authenticate` then `authorize(...)`
- * ahead of a controller, per system_design_architecture.pdf §8's request
- * flow), without silently no-op'ing security. Calling it throws loudly
- * rather than letting a request through unauthenticated.
- *
- * Real implementation (Decision D2 dependent — see CLAUDE.md "Open
- * decisions", C1) reads the access-token cookie (middleware/cookies.ts),
- * verifies the JWT, checks the user's status and tokenVersion, and sets
- * `req.auth` to the `{ kind: 'member', ... }` variant of AuthContext
- * (core/types/express.ts). A parallel guest path verifies the guest-session
- * cookie and sets the `{ kind: 'guest', ... }` variant.
+ * Resolving wedding membership (`req.auth` — weddingId/role) is a separate
+ * step, done by middleware/load-membership.ts on wedding-scoped routes only
+ * — see core/types/express.ts for why the two are split.
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
-import { AppError } from '../core/errors/index.js';
+import { AppError } from '#core/errors/index.js';
+
+import { verifyAccessToken } from '../modules/auth/auth.tokens.js';
+
+import { COOKIE_NAMES } from './cookies.js';
 
 export const authenticate: RequestHandler = (
-  _req: Request,
+  req: Request,
   _res: Response,
-  _next: NextFunction,
+  next: NextFunction,
 ): void => {
-  throw AppError.internal(
-    'authenticate() is not implemented yet — this route was wired up before the auth module.',
-  );
+  const token = req.cookies[COOKIE_NAMES.access] as string | undefined;
+  if (!token) {
+    next(AppError.unauthorized());
+    return;
+  }
+
+  verifyAccessToken(token)
+    .then(({ userId }) => {
+      req.userId = userId;
+      next();
+    })
+    .catch((error: unknown) => {
+      next(error);
+    });
 };

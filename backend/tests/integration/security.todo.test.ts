@@ -15,8 +15,11 @@
  */
 import { describe, it } from 'vitest';
 
+// The wedding resource itself is covered — see tests/integration/weddings.test.ts
+// ("a non-member cannot read another user's wedding"). Sub-resources
+// (events, guests, etc.) remain todo below since those modules don't exist yet.
 describe('cross-wedding access', () => {
-  it.todo("a member of wedding A cannot read wedding B's resources via a guessed/known id");
+  it.todo("a member of wedding A cannot read wedding B's sub-resources via a guessed/known id");
   it.todo("a member of wedding A cannot write to wedding B's resources");
 });
 
@@ -37,10 +40,11 @@ describe('role restrictions', () => {
   it.todo('the final active ADMIN of a wedding cannot be removed');
 });
 
+// Login's generic-error and rate-limit cases are implemented — see
+// tests/integration/auth.test.ts ("returns the same generic message for a
+// wrong password as for a nonexistent account", "is rate limited past the
+// configured threshold"). Guest-access validation remains todo below: it
+// depends on the invitation module, which doesn't exist yet.
 describe('rate limiting and generic errors', () => {
-  it.todo('login returns a generic invalid-credentials message regardless of which check failed');
-  it.todo(
-    'login is rate limited past the configured threshold (see middleware/rate-limit.ts policies)',
-  );
   it.todo('guest-access validation is rate limited past the configured threshold');
 });

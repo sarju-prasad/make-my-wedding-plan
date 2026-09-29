@@ -26,9 +26,27 @@ declare module 'express-serve-static-core' {
 }
 
 /**
- * Populated by middleware/authenticate.ts once the auth module exists
- * (Phase 5+). Declared here now so the shape is visible from day one, even
- * though nothing assigns it yet — see middleware/authenticate.ts.
+ * Populated by middleware/authenticate.ts for every authenticated request —
+ * "who made this request", independent of any wedding. Wedding-scoped routes
+ * additionally get `req.auth` (below) once membership has been resolved.
+ */
+declare module 'express-serve-static-core' {
+  interface Request {
+    userId?: string;
+  }
+}
+
+/**
+ * Populated by middleware/load-membership.ts on wedding-scoped routes
+ * (`/weddings/:weddingId/...`), after authenticate.ts has set `req.userId`.
+ * Deliberately a *separate* step from authenticate.ts: authenticate.ts only
+ * proves identity from the access token (no DB round trip — see
+ * auth.tokens.ts), while resolving `weddingId`/`role` requires a
+ * wedding_members lookup keyed on a route param that only wedding-scoped
+ * routes have. api_design.docx §6.1: "All wedding access must be checked
+ * through wedding_members." A parallel guest path verifies the
+ * guest-session cookie and sets the `{ kind: 'guest', ... }` variant once the
+ * guest-access module exists.
  */
 export type AuthContext =
   | { kind: 'member'; userId: string; weddingId: string; role: 'ADMIN' | 'MANAGER' }

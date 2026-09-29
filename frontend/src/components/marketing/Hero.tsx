@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import couplePortrait from "../../../public/images/couple-portrait.png";
 import { Icon } from "./Icon";
 
@@ -52,13 +53,13 @@ export function Hero() {
           </div>
 
           <div className="flex w-full flex-col items-stretch gap-space-md sm:w-auto sm:flex-row sm:items-center">
-            <a
-              href="#"
+            <Link
+              href="/sign-up"
               className="inline-flex items-center justify-center rounded-lg bg-primary-container px-space-lg py-space-sm font-label-lg text-label-lg text-on-primary shadow-sm transition-all hover:bg-secondary"
             >
               <span>Plan your wedding</span>
               <Icon name="arrow_forward" className="ml-2 text-[18px]" />
-            </a>
+            </Link>
             <button
               type="button"
               className="inline-flex items-center justify-center rounded-lg bg-surface-container-lowest px-space-lg py-space-sm font-label-lg text-label-lg text-on-surface shadow-sm transition-all hover:bg-surface-container"

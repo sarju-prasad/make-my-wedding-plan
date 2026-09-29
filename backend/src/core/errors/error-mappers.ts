@@ -30,6 +30,21 @@ function isMongoServerError(error: unknown): error is MongoServerErrorLike {
 }
 
 /**
+ * True when `error` is a duplicate-key violation (E11000) on exactly the
+ * given single field. For a module-specific translation (e.g. auth.service.ts
+ * turning a `users.email` collision into EMAIL_ALREADY_EXISTS) — this mapper
+ * deliberately does NOT special-case field names itself, since it's shared
+ * by every model in the app and a field name alone doesn't say which
+ * collection raised it (a future model with its own unrelated single-field
+ * `email` index would otherwise get mislabeled here too).
+ */
+export function isDuplicateKeyError(error: unknown, field: string): boolean {
+  if (!isMongoServerError(error) || error.code !== 11000) return false;
+  const fields = Object.keys(error.keyPattern ?? {});
+  return fields.length === 1 && fields[0] === field;
+}
+
+/**
  * Connectivity failures, not data errors — the driver couldn't reach a
  * server at all. Detected by name rather than `instanceof` so this module
  * doesn't need a direct dependency on the `mongodb` driver package purely
@@ -89,6 +104,10 @@ export function mapKnownError(error: unknown): AppError | null {
 
   // Duplicate-key violations (E11000) surface unique-index conflicts, such as
   // one active invitation per guest per wedding — see db_design.docx §7.
+  // Module-specific translations (e.g. users.email -> EMAIL_ALREADY_EXISTS)
+  // happen at the call site via isDuplicateKeyError() above, not here — this
+  // mapper is shared by every model and has no way to know which collection
+  // raised a given field-name collision.
   if (isMongoServerError(error) && error.code === 11000) {
     const fields = Object.keys(error.keyPattern ?? {});
     return AppError.duplicate('This resource already exists.', { fields });

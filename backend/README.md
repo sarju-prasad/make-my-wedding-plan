@@ -3,10 +3,13 @@
 Backend REST API for **Make My Wedding Plan**, a private, invitation-only wedding
 management platform for Indian weddings.
 
-> **Status: scaffold complete.** Runtime foundation, security middleware,
-> database layer, health endpoints, integration shells, OpenAPI generation,
-> and the test harness are all in place and passing `npm run verify`. No
-> business features are implemented yet. See [Current state](#current-state).
+> **Status: scaffold complete, two business modules built.** Runtime
+> foundation, security middleware, database layer, integration shells,
+> OpenAPI generation, and the test harness are all in place and passing
+> `npm run verify`. `auth` (register/login/refresh/logout/me) and `weddings`
+> (create/list/view) are implemented; everything else is still scaffold-only.
+> See [Current state](#current-state) and
+> [doc/project_status.md](../doc/project_status.md).
 
 ---
 
@@ -143,21 +146,37 @@ MongoDB instance):
 - Serverless-safe MongoDB connection, soft-archive and toJSON Mongoose plugins
 - Full middleware chain: request ID, CORS, CSRF origin check, security
   headers, cookie helpers, MongoDB-backed rate limiting
-- `authenticate`/`authorize` stubs (correct signatures, not yet implemented —
-  see CLAUDE.md's open decisions)
+- `authenticate` (verifies the access-token cookie, stateless) and
+  `load-membership` + `authorize` (resolves wedding role from
+  `wedding_members`, checks it) — real implementations, not stubs
 - Express app assembly, local dev server, Vercel entry point
-- `health` module (`/healthz`, `/readyz`) — the only module mounted
+- `health` module (`/healthz`, `/readyz`)
+- `auth` module: register, login, refresh, logout, me, forgot-password,
+  reset-password — Argon2id password hashing, JWT access (15 min) +
+  refresh (7 days) in HttpOnly cookies, generic invalid-credentials/
+  forgot-password responses, rate-limited register/login/forgot-password,
+  single-use SHA-256-hashed reset tokens that expire in 1 hour and bump
+  `tokenVersion` (invalidating every session) on use
+- `weddings` module: create (transactional — wedding + the creator's ADMIN
+  `wedding_members` row together), list mine, view one — every wedding gets
+  an auto-generated unique `slug`
 - OpenAPI document generation from the Zod schemas (`npm run openapi:generate`),
   served via Scalar outside production
-- Cloudflare R2 and Resend integration shells (client + error mapping only —
-  unverified against real credentials, see below)
+- Cloudflare R2 integration shell (client + error mapping only — unverified
+  against real credentials); Resend integration used for real by
+  forgot-password when `RESEND_API_KEY` is configured, with a non-production
+  fallback (the reset link comes back in the response body, never logged)
+  when it isn't
 - Test harness: Vitest + `mongodb-memory-server` (single-node replica set),
-  49 real tests, plus the required security test cases from `api_design.docx`
-  §23 tracked as visible `it.todo(...)` placeholders
+  158 real tests, plus the still-open required security test cases from
+  `api_design.docx` §23 tracked as visible `it.todo(...)` placeholders
 - Git hooks (Husky: pre-commit, commit-msg, pre-push) and GitHub Actions CI
 
-Not yet implemented — no business modules exist. Also still open:
+Not yet implemented:
 
+- Manager invites, guest/invitation/RSVP, events, tasks, vendors, expenses,
+  wedding website, photos, announcements — see
+  [doc/project_status.md](../doc/project_status.md) for what's next
 - Every item under [Open decisions](CLAUDE.md#open-decisions) in CLAUDE.md
 - R2 and Resend were verified only at the "does the client construct
   correctly" level — not against real credentials or a real bucket/account

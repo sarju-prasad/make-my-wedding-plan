@@ -15,10 +15,11 @@ concrete example of an API that isn't what older Next.js knowledge expects.
 
 ## What exists right now
 
-Only the public landing page (`/`), reproduced directly from the real,
-approved Stitch export (project `18072378067396819631`, screen
+The public landing page (`/`), reproduced directly from the real, approved
+Stitch export (project `18072378067396819631`, screen
 `671f69847aff45f6813834e1b1f25588` — "Make My Wedding Plan - Private
-Wedding Management Platform"):
+Wedding Management Platform"), plus a minimal auth + wedding-creation flow
+wired to `../backend`'s `auth`/`weddings` modules:
 
 - The design **system** (colors, type scale, radii, in `src/app/globals.css`)
   and the page's **structure, copy, and sample data** (`src/app/page.tsx`
@@ -41,9 +42,24 @@ Wedding Management Platform"):
   the export, downloaded once into `public/images/` rather than kept as
   live links to Stitch's `lh3.googleusercontent.com` CDN (those links are
   Google-hosted and not guaranteed stable long-term).
+- **`/sign-up`, `/sign-in`, `/forgot-password`, `/reset-password`,
+  `/weddings`** — plain client components (no design reference exists
+  for these; styled by hand with the same design tokens as the homepage,
+  not transcribed from Stitch). `/weddings` doubles as both the
+  create-wedding form and the (very minimal) "your weddings" list — there's
+  no dashboard yet, so this is intentionally the only post-auth page.
+  `/reset-password` reads `?token=` via `useSearchParams()`, which Next.js
+  requires wrapping in `<Suspense>` for static prerendering to work — see
+  that file for the pattern if another page needs `useSearchParams()`.
+- `src/lib/api.ts` — the only place that calls `../backend`. Cookie-based
+  auth (`credentials: 'include'`), unwraps the standard success/error
+  envelope, throws `ApiError` on failure. `NEXT_PUBLIC_API_BASE_URL`
+  (`.env.example`) points at the backend's `/api/v1`.
+- The homepage's `plan-your-wedding` CTAs (Header, Hero, FinalCta) now link
+  to `/sign-up`; its `sign-in` links now go to `/sign-in`. Every other
+  nav/CTA link is still `#` — no page exists for them yet (see "Open items").
 - Nothing else is built: no dashboard, no guest-facing wedding site, no
-  auth pages, no data fetching from `../backend`. All CTAs/nav links point
-  to `#` because the Stitch export itself never assigned real routes.
+  Manager invites.
 
 ## Stack and fixed decisions
 
@@ -86,8 +102,8 @@ Can't resolve '@vercel/turbopack-next/internal/font/google/font'`, in a
 ## Open items
 
 - No test runner yet (see root README's note on React Testing Library).
-- Real routes need wiring for every nav/CTA link (currently all `#`, see
-  "What exists right now" above) once sign-in/get-started pages exist.
+- Most nav/CTA links (How it works, Features, Planning Suite, Privacy) are
+  still `#` — no corresponding page or section exists yet.
 - A product decision on the Stay & Travel Desk / real-time-language scope
   note above (see "What exists right now") is still open.
-- Nothing beyond the public landing page has been scoped or built.
+- No dashboard, guest-facing wedding site, or Manager-invite UI yet.

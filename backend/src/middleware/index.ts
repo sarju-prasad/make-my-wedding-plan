@@ -22,3 +22,4 @@ export {
 } from './cookies.js';
 export { authenticate } from './authenticate.js';
 export { authorize, type MemberRole } from './authorize.js';
+export { loadMembership } from './load-membership.js';

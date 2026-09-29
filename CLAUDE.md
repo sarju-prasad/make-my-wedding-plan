@@ -14,10 +14,23 @@ platform for Indian weddings. This repo is an **npm-workspaces monorepo**:
 - [`frontend/`](frontend) — Next.js app. Has its own
   [frontend/CLAUDE.md](frontend/CLAUDE.md) — read it before touching
   anything under `frontend/`. Only the public landing page exists so far,
-  and it's a first draft (see that file for what that means).
+  reproduced from the real, approved Stitch design export (see that file
+  for what that means and what's still open).
 - [`doc/`](doc) — the four source-of-truth design documents both workspaces
   answer to (PRD, DB design, API design, system architecture). Never edit,
-  rename, or reformat these.
+  rename, or reformat these. Also holds
+  [doc/project_status.md](doc/project_status.md) — see below.
+
+## Keep the project status log up to date
+
+[doc/project_status.md](doc/project_status.md) is a running log of what's
+actually been *built*, as opposed to the four design documents above (which
+describe what's *intended*). Whenever a major feature lands — a new module,
+a rebuilt page, a significant fix to shared infrastructure — add an entry to
+its Progress Log and update its Current Status section to match. Small
+commits (a typo fix, a minor tweak) don't need an entry; this instruction
+exists so that convention survives across sessions instead of being
+re-explained each time.
 
 ## Repo-wide vs workspace-scoped
 
