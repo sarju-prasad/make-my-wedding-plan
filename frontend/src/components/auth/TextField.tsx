@@ -33,6 +33,12 @@ export function TextField({
     <div className="flex flex-col gap-1.5">
       <label htmlFor={name} className="font-label-lg text-label-lg text-on-surface">
         {label}
+        {required && (
+          <span className="text-error" aria-hidden="true">
+            {" "}
+            *
+          </span>
+        )}
       </label>
       <div className="relative">
         <input

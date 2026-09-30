@@ -152,6 +152,26 @@ export async function getCurrentUser(userId: string): Promise<UserDocument> {
   return user;
 }
 
+export interface PublicUserSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/**
+ * This module's public entry point for other modules that need to resolve a
+ * user by email without reaching into auth.model.ts directly — e.g.
+ * modules/weddings/members.service.ts, adding a Manager by email
+ * (api_design.docx §9: "Validate that the target user exists"). Only ACTIVE
+ * users resolve; a SUSPENDED account is treated as not found, same as
+ * getCurrentUser() above.
+ */
+export async function findUserByEmail(email: string): Promise<PublicUserSummary | null> {
+  const user = await User.findOne({ email, status: 'ACTIVE' });
+  if (!user) return null;
+  return { id: String(user._id), name: user.name, email: user.email };
+}
+
 export interface RequestPasswordResetResult {
   /**
    * Only ever populated outside production, and only when no email

@@ -76,6 +76,12 @@ export async function createWedding(
             weddingDate: body.weddingDate,
             timezone: body.timezone,
             location: body.location,
+            // `exactOptionalPropertyTypes` treats `description?: string` as
+            // "key absent, or a string" — never "key present as undefined" —
+            // so the key is spread in only when actually provided, rather
+            // than assigned `body.description` directly (which is typed
+            // `string | undefined`).
+            ...(body.description !== undefined ? { description: body.description } : {}),
             language: body.language ?? 'en',
             status: 'ACTIVE',
             createdBy: new Types.ObjectId(userId),

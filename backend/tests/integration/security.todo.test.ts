@@ -35,10 +35,10 @@ describe('RSVP', () => {
   it.todo('an RSVP for an event not on the invitation is rejected');
 });
 
-describe('role restrictions', () => {
-  it.todo('a MANAGER cannot perform an ADMIN-only operation');
-  it.todo('the final active ADMIN of a wedding cannot be removed');
-});
+// Role restrictions are implemented — see tests/integration/members.test.ts
+// ("a MANAGER cannot add a member (ADMIN-only)", "a MANAGER cannot remove a
+// member (ADMIN-only)", "cannot demote the only active ADMIN", "cannot
+// remove the only active ADMIN").
 
 // Login's generic-error and rate-limit cases are implemented — see
 // tests/integration/auth.test.ts ("returns the same generic message for a

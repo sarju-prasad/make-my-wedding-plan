@@ -8,7 +8,7 @@ infrastructure — not for every small commit. Add new entries to the top of
 the **Progress Log**, and keep **Current Status** in sync with the latest
 entry.
 
-## Current Status (as of 2026-09-29)
+## Current Status (as of 2026-09-30)
 
 - **Backend** (`backend/`): scaffolded and verified (Express + TypeScript +
   MongoDB, npm workspace). Two business modules are mounted: `health`
@@ -16,16 +16,23 @@ entry.
   register/login/refresh/logout/me and forgot-password/reset-password
   (Argon2id, JWT cookies, single-use hashed reset tokens, generic
   responses that don't reveal account existence). `weddings` covers
-  create/list/view a wedding — creator becomes ADMIN. No guest, invitation,
-  event, RSVP, task, vendor, expense, website, or announcement modules yet.
-  See [backend/CLAUDE.md](../backend/CLAUDE.md) for stack decisions and
-  open product/design questions.
+  create/list/view a wedding (creator becomes ADMIN, optional description)
+  and full member management — list, add by email (ADMIN only, target must
+  already have an account), change role, remove, with at least one active
+  ADMIN always enforced. No guest, invitation, event, RSVP, task, vendor,
+  expense, website, or announcement modules yet. See
+  [backend/CLAUDE.md](../backend/CLAUDE.md) for stack decisions and open
+  product/design questions.
 - **Frontend** (`frontend/`): scaffolded (Next.js 16 + Tailwind v4). The
   public homepage (`/`) faithfully matches the real, approved Stitch design
   export. `/sign-up`, `/sign-in`, `/forgot-password`, `/reset-password`, and
   `/weddings` (create + minimal list, no real design reference — styled by
-  hand) are wired to the backend's `auth`/`weddings` modules. Still no
-  dashboard or guest-facing site. See
+  hand) are wired to the backend's `auth`/`weddings` modules. Each wedding
+  card now opens `/weddings/[weddingId]`, an overview/dashboard page
+  (couple names, countdown, wedding details, a "Wedding team" members
+  section, an events empty state, and a quick-actions grid to the not-yet-
+  built modules) transcribed from a real but previously-unused Stitch
+  screen, "Wedding Command Center." Still no guest-facing site. See
   [frontend/CLAUDE.md](../frontend/CLAUDE.md).
 - **Repo tooling**: npm-workspaces monorepo, shared git hooks
   (`.husky/` + `lint-staged.config.mjs`) confirmed working end-to-end, CI
@@ -44,6 +51,232 @@ entry.
   the dev server before assuming it's a code bug").
 
 ## Progress Log
+
+### 2026-09-30 — Code review pass on Overview/Members/venue-autocomplete, fixes applied
+
+Ran the full review against the accumulated diff (Overview page, sidebar,
+venue autocomplete, description field, Members feature). Found and fixed:
+
+- **The Members compound-unique-index duplicate check was dead code.**
+  `addMember()`'s concurrent-race catch called
+  `isDuplicateKeyError(error, 'weddingId')` / `(error, 'userId')` — checks
+  written for a single-field index — against `wedding_members`' actual
+  index, the *compound* `{weddingId, userId}`. A real E11000 has a 2-key
+  `keyPattern`, so neither call ever matched and the intended friendly
+  "This person is already a member of this wedding." message was
+  unreachable; a genuine race fell through to the generic mapper's
+  "This resource already exists." instead (still a 409, just the wrong
+  message). Fixed by teaching `isDuplicateKeyError()` to accept a field
+  array for exactly this case. Writing a real concurrent-add regression
+  test surfaced a second, more fundamental gap: `db/connection.ts` disables
+  `autoIndex` outside development by design (indexes are synced explicitly
+  via `npm run db:indexes`, never implicitly), and the test database is no
+  exception — the unique index this test needs didn't exist there either,
+  so MongoDB silently allowed two "duplicate" inserts instead of rejecting
+  the second. No test in this codebase had ever exercised a real
+  DB-level unique-index race before. Fixed by explicitly calling
+  `WeddingMember.syncIndexes()` in this test file's `beforeAll`.
+- **`VenueAddressField` had no failure path once a Google Maps API key was
+  configured.** The `<Script>` tag only handled `onLoad`; a failed script
+  load (network block, ad-blocker, CSP, bad/restricted key, quota) or a
+  failed `importLibrary("places")`/`fetchFields()` call left the widget
+  permanently empty with no fallback — silently making the create-wedding
+  form unsubmittable, contradicting this component's own doc comment
+  claiming the form "stays fully usable in any environment." Fixed: script
+  and library-load failures now fall back to the same manual address/
+  lat/long fields used when no key is configured at all; a selected place
+  with no fetchable location shows an inline retry message instead of
+  doing nothing.
+- The manual lat/long fallback accepted non-finite values (`Number("1e400")
+  === Infinity`, which is `!== null` and so passed the create-form's submit
+  guard) — added a `Number.isFinite()` check at the point of parsing.
+- **An Admin could remove their own membership from the "Wedding team"
+  panel**, which then broke the panel itself (the next member-list fetch
+  404s — they're no longer an active member) instead of navigating them
+  away cleanly. The Remove control is now hidden for the viewer's own row;
+  role changes to your own membership are still allowed.
+- `MembersSection`'s per-row pending/error state was a single shared
+  scalar, so finishing one member's request could re-enable a *different*
+  member's still-in-flight controls, and the Remove control's Confirm/
+  Cancel weren't disabled while a request was in flight at all. Fixed with
+  a `Set` of pending member ids and consistent disabling. The invite
+  form's email/role inputs are now disabled while submitting too (a native
+  Enter-key submit doesn't respect a disabled submit *button*).
+- Every add/role-change/remove action forced a full member-list refetch
+  purely to re-learn data its own mutation response already returned;
+  switched to patching local state directly from that response (also
+  narrows the double-submit race window from the fix above, since there's
+  no longer an async refetch gap after a mutation settles).
+- `listMembers()` fetched with no `limit`, defaulting to the backend's
+  page-1/20 default — a wedding with 21+ active members would silently
+  truncate the team list and could hide an admin's own row (and therefore
+  their management controls) if it fell on a later page. Requested the
+  backend's real ceiling (100) instead — pagination UI wasn't built, since
+  a wedding team realistically isn't going to exceed that in V1.
+- `listMembers()`'s `countDocuments` + `find` ran sequentially despite
+  neither depending on the other; switched to `Promise.all`.
+- `middleware/authorize.ts` declared its own local `MemberRole` type
+  instead of importing the real one from `members.model.ts` — a future
+  third role would silently not type-check against it. Now imported
+  (type-only) from the module's model, re-exported so `middleware/index.ts`
+  needed no change.
+- `members.validation.ts`'s `memberIdParamsSchema` re-declared `weddingId`
+  from scratch instead of extending `weddingIdParamsSchema`, the same
+  field's real schema.
+- `USER_NOT_FOUND`'s message claimed "they need to sign up", which is
+  wrong for an existing-but-SUSPENDED account (`findUserByEmail` treats
+  both as not-found, same as `getCurrentUser`) — softened to "No active
+  account found with this email."
+- Two stale comments fixed: `api.ts` claimed no endpoint returns 204
+  (`removeMember()`, in this same diff, does); a `weddings.test.ts` comment
+  claimed no "remove member" endpoint existed (one does now, but the state
+  that test needs — a wedding's *only* member, removed — is exactly what
+  the real endpoint's last-Admin protection refuses to produce, so the
+  direct model write it uses is still correct, just no longer for the
+  reason the comment gave).
+- `doc/project_status.md`'s own bookkeeping was off: the "Wedding Overview
+  page" entry's test-count delta didn't reconcile with its neighbors, and
+  neither it nor any other entry mentioned the venue-autocomplete/
+  description-field work at all. Both corrected (see the dated entries
+  below) rather than silently left wrong.
+- `daysUntilWedding()`/`countdownLabel()` were defined locally in the
+  Overview page instead of `lib/date.ts`, the module this same feature
+  created specifically to be the one home for wedding-timezone-aware date
+  logic. Moved.
+
+2 new backend tests (the concurrent-add regression test, and a PATCH
+ADMIN-only-enforcement test that was the one mutating members route
+missing that coverage). **192 backend tests** (up from 190).
+
+### 2026-09-29 — Wedding member management (Admin/Manager)
+
+Closed a real gap: "Admin" was previously just a label stamped on the
+wedding creator, with no way to invite a Manager, no member list, and
+`middleware/authorize.ts` unused everywhere (flagged in `backend/CLAUDE.md`
+as a footgun). This is api_design.docx §9 in full, and resolves open
+decision G1.
+
+Backend — `modules/weddings/members.{service,controller,validation}.ts`,
+routes added to `weddings.routes.ts`:
+
+- `GET /weddings/:weddingId/members` — any ACTIVE member; paginated.
+- `POST /weddings/:weddingId/members` — ADMIN only. Adds an **existing**
+  registered user by email (`USER_NOT_FOUND` if they haven't signed up —
+  api_design.docx §9's "validate that the target user exists" reads as
+  requiring an account already, not a pending-invite-token flow for an
+  email with no account; that would be a second token system alongside the
+  guest-invitations one this codebase doesn't have yet). Reactivates a
+  previously-removed membership in place rather than failing on the
+  `{weddingId, userId}` unique index.
+- `PATCH .../members/:memberId` — ADMIN only, changes role.
+- `DELETE .../members/:memberId` — ADMIN only, soft-removes (`status:
+  REMOVED`).
+- Both PATCH and DELETE refuse to leave a wedding with zero active ADMINs
+  (`CANNOT_REMOVE_LAST_ADMIN`) — extended from api_design.docx's literal
+  "prevent removal of the final active ADMIN" to also cover demoting the
+  last ADMIN to MANAGER, since that leaves the same bad state.
+- First real call site for `authorize()` — `backend/CLAUDE.md` updated,
+  the "no call site yet" warning removed.
+- Added `auth.service.ts#findUserByEmail` as that module's public entry
+  point for the cross-module email lookup, rather than reaching into
+  `auth.model.ts` directly.
+- 15 new tests (add/list/role-change/remove, ADMIN-only enforcement,
+  last-admin protection on both demote and remove, reactivation,
+  USER_NOT_FOUND, duplicate-member). Two `it.todo` placeholders in
+  `security.todo.test.ts` ("a MANAGER cannot perform an ADMIN-only
+  operation", "the final active ADMIN... cannot be removed") are now real
+  tests instead. **190 backend tests** (up from 175), 13 OpenAPI paths (up
+  from 11).
+
+Frontend — new "Wedding team" section on `/weddings/[weddingId]`
+(`components/wedding/MembersSection.tsx`): lists members with role badges;
+ADMINs additionally get an add-by-email form, a role `<select>` per member,
+and a click-to-confirm remove control. Whether the viewer is an ADMIN is
+derived from their own row in the members list itself (no backend response
+shape change needed for this).
+
+### 2026-09-29 — Wedding Overview page + GET wedding API
+
+`GET /api/v1/weddings/:weddingId` already existed from the earlier
+auth+weddings work (`authenticate` → `loadMembership` → controller →
+service), so this landed as a frontend feature plus a few backend test
+additions, not new backend logic:
+
+- New `/weddings/[weddingId]` page — the wedding's overview/dashboard.
+  Header, hero (couple names, wedding name, date, venue, a countdown
+  computed client-side from `weddingDate` + the wedding's own `timezone`),
+  a wedding-details card, an events empty state ("No events added yet"),
+  and a 6-item quick-actions grid (Events/Guests/Tasks/Vendors/Expenses/
+  Wedding Website) — every action shows "Coming soon" rather than a
+  broken link or fabricated data, since none of those modules exist yet.
+  Visual language transcribed from a real, previously-hidden Stitch screen
+  in the same project as the homepage export
+  (`7aa0c8f50a5b4fa9818aed91ba712b7f`, "Wedding Command Center"), cut down
+  to only the sections backed by real data — its fully-featured mockup
+  (task lists, RSVP tallies, vendor/budget breakdowns, a family-team
+  roster) was explicitly not transcribed, since building those would mean
+  fabricating data for modules this codebase doesn't have yet. After a
+  follow-up comparison against the real design, added the missing
+  structural chrome from the same screen — a fixed left sidebar listing
+  all 12 workspace modules (`components/layout/WeddingSidebar.tsx`; every
+  module besides Overview shows "Coming soon" the same honest way the
+  quick actions do) and a header search field, present but genuinely
+  disabled (no search feature exists), rather than a fake affordance.
+- `/weddings` cards are now real links to the overview page instead of
+  inert `<div>`s; successful wedding creation redirects there instead of
+  leaving the user on the creation form.
+- Confirmed a real conflict before touching anything: a since-superseded
+  task spec expected `403 FORBIDDEN` for a non-member/removed-member GET;
+  the existing `load-membership.ts` deliberately returns `404
+  WEDDING_NOT_FOUND` for both, to prevent wedding-id enumeration (matches
+  `api_design.docx`'s own error-code table). Raised explicitly and kept
+  the existing, more secure behavior rather than changing it.
+- Added the two backend test cases that behavior implies but weren't
+  covered yet: `GET /weddings/:weddingId` without auth (401), and as a
+  since-removed member (404) — the latter needs a direct `wedding_members`
+  update in the test itself, since no "remove member" endpoint existed yet
+  at the time (it does now — see the member-management entry above — but
+  the state this test needs, removing a wedding's only member, is exactly
+  what that endpoint's last-active-ADMIN protection refuses to do via the
+  API, so the direct update is still the right approach, not a gap).
+- A same-day review caught and fixed: an unescaped apostrophe that failed
+  `eslint`'s `react/no-unescaped-entities` (a real lint failure, not a
+  style nit); `formatWeddingDate()` duplicated verbatim between `/weddings`
+  and the new page, now extracted to `frontend/src/lib/date.ts`; and the
+  create-wedding button's `submitting` state no longer has a code path
+  where it can get stuck disabled if the post-create redirect doesn't
+  complete synchronously.
+- Separately the same day (reviewing the wedding-creation API against its
+  own spec, before the Overview page work above): a 9-field `it.each`
+  matrix asserting every required `POST /weddings` field individually
+  rejects when missing, an invalid-input-types test, a test confirming
+  client-supplied `createdBy`/`status`/`role` are rejected outright by the
+  `.strict()` schema rather than silently ignored, and a transaction-
+  rollback regression test (mocks the second write of the wedding+
+  membership transaction to fail, asserts no orphaned wedding is left
+  behind). 170 backend tests at that point (up from 158), then 172 with
+  the two GET-wedding-access tests above.
+
+### 2026-09-29 — Venue address autocomplete + wedding description field
+
+- Replaced raw manual latitude/longitude entry on the create-wedding form
+  with Google Places autocomplete (`components/wedding/VenueAddressField.tsx`)
+  — typing an address shows live suggestions; picking one fills address and
+  coordinates automatically. Falls back to the original manual address +
+  lat/long fields when `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` isn't configured
+  (true in this environment — nobody has supplied a real key), so the form
+  stays fully usable either way. Requires (dev-only) `@types/google.maps`.
+- Added an optional wedding `description` field end to end: Mongoose schema,
+  Zod validation (2000-char max), OpenAPI docs, a textarea on the create
+  form, and display on the Overview page's hero card when present — an
+  additive field beyond `db_design.docx`'s list, same category as `slug`
+  (G5). 3 new backend tests (accept/round-trip, genuinely absent — not
+  `null`/`""` — when omitted, rejected past 2000 characters). 175 backend
+  tests (up from 172).
+- Required-field markers (`*`) added to every required form field via the
+  shared `TextField` component, so the change applies across every page
+  that uses it (sign-up, sign-in, forgot/reset-password, create-wedding),
+  not just the wedding form.
 
 ### 2026-09-29 — Second code-review pass, fixes applied
 

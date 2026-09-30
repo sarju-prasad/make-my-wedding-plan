@@ -31,17 +31,26 @@ function isMongoServerError(error: unknown): error is MongoServerErrorLike {
 
 /**
  * True when `error` is a duplicate-key violation (E11000) on exactly the
- * given single field. For a module-specific translation (e.g. auth.service.ts
- * turning a `users.email` collision into EMAIL_ALREADY_EXISTS) — this mapper
- * deliberately does NOT special-case field names itself, since it's shared
- * by every model in the app and a field name alone doesn't say which
- * collection raised it (a future model with its own unrelated single-field
- * `email` index would otherwise get mislabeled here too).
+ * given field (or, for a compound unique index, exactly the given set of
+ * fields — e.g. wedding_members' `{weddingId, userId}` index). For a
+ * module-specific translation (e.g. auth.service.ts turning a `users.email`
+ * collision into EMAIL_ALREADY_EXISTS) — this mapper deliberately does NOT
+ * special-case field names itself, since it's shared by every model in the
+ * app and a field name alone doesn't say which collection raised it (a
+ * future model with its own unrelated single-field `email` index would
+ * otherwise get mislabeled here too). Matching is exact and order-
+ * independent: a 2-field compound index never matches a 1-field call and
+ * vice versa, since a partial match would misidentify which constraint was
+ * actually violated.
  */
-export function isDuplicateKeyError(error: unknown, field: string): boolean {
+export function isDuplicateKeyError(error: unknown, field: string | string[]): boolean {
   if (!isMongoServerError(error) || error.code !== 11000) return false;
-  const fields = Object.keys(error.keyPattern ?? {});
-  return fields.length === 1 && fields[0] === field;
+  const violatedFields = Object.keys(error.keyPattern ?? {});
+  const expectedFields = Array.isArray(field) ? field : [field];
+  return (
+    violatedFields.length === expectedFields.length &&
+    expectedFields.every((f) => violatedFields.includes(f))
+  );
 }
 
 /**

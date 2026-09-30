@@ -36,6 +36,7 @@ export const createWeddingBodySchema = z
         longitude: z.number().min(-180).max(180),
       })
       .strict(),
+    description: z.string().trim().max(2000).optional(),
     language: z.string().trim().min(1).optional(),
   })
   .strict()

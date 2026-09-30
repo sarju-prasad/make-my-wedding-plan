@@ -7,6 +7,8 @@ import {
   successEnvelope,
 } from '#config/openapi.js';
 
+import { MEMBER_ROLE } from './members.model.js';
+import { addMemberBodySchema, updateMemberBodySchema } from './members.validation.js';
 import { WEDDING_STATUS } from './weddings.model.js';
 // The request body is imported directly from the schema that actually
 // validates it — see auth.openapi.ts for why (two independent copies can
@@ -25,6 +27,11 @@ const weddingSchema = z.object({
   weddingDate: z.iso.datetime(),
   timezone: z.string(),
   location: z.object({ address: z.string(), latitude: z.number(), longitude: z.number() }),
+  // Optional and unset by default — Mongoose omits the key entirely rather
+  // than storing null when a non-required field was never set, so this is
+  // `.optional()` (key may be absent), not `.nullable()` (see archivedAt/
+  // archivedBy above for the contrasting case, which do default to null).
+  description: z.string().optional(),
   language: z.string(),
   status: z.enum(WEDDING_STATUS),
   // From the soft-archive plugin (db/plugins/soft-archive.ts) — weddings.model.ts
@@ -42,6 +49,19 @@ const weddingSchema = z.object({
 
 const weddingResponse = successEnvelope('WeddingResponse', z.object({ wedding: weddingSchema }));
 const weddingListResponse = listEnvelope('WeddingListResponse', weddingSchema);
+
+const memberSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  name: z.string(),
+  email: z.string(),
+  role: z.enum(MEMBER_ROLE),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+const memberResponse = successEnvelope('MemberResponse', z.object({ member: memberSchema }));
+const memberListResponse = listEnvelope('MemberListResponse', memberSchema);
 
 registerModulePaths({
   '/weddings': {
@@ -87,6 +107,79 @@ registerModulePaths({
         },
         '401': commonErrorResponses['401'],
         '404': commonErrorResponses['404'],
+      },
+    },
+  },
+  '/weddings/{weddingId}/members': {
+    get: {
+      operationId: 'getWeddingMembers',
+      summary: 'List a wedding’s active members',
+      tags: ['Members'],
+      security: [{ accessTokenCookie: [] }],
+      responses: {
+        '200': {
+          description: 'Paginated list of the wedding’s active members.',
+          content: { 'application/json': { schema: memberListResponse } },
+        },
+        '401': commonErrorResponses['401'],
+        '404': commonErrorResponses['404'],
+        '422': commonErrorResponses['422'],
+      },
+    },
+    post: {
+      operationId: 'postWeddingMember',
+      summary: 'Add a member by email',
+      description:
+        'ADMIN only. The target must already have an account (api_design.docx §9) — there is no pending-invite state for an email with no account yet.',
+      tags: ['Members'],
+      security: [{ accessTokenCookie: [] }],
+      requestBody: { content: { 'application/json': { schema: addMemberBodySchema } } },
+      responses: {
+        '201': {
+          description: 'The added (or reactivated) member.',
+          content: { 'application/json': { schema: memberResponse } },
+        },
+        '401': commonErrorResponses['401'],
+        '403': commonErrorResponses['403'],
+        '404': commonErrorResponses['404'],
+        '409': commonErrorResponses['409'],
+        '422': commonErrorResponses['422'],
+      },
+    },
+  },
+  '/weddings/{weddingId}/members/{memberId}': {
+    patch: {
+      operationId: 'patchWeddingMember',
+      summary: 'Change a member’s role',
+      description: 'ADMIN only. Cannot demote the wedding’s only active Admin.',
+      tags: ['Members'],
+      security: [{ accessTokenCookie: [] }],
+      requestBody: { content: { 'application/json': { schema: updateMemberBodySchema } } },
+      responses: {
+        '200': {
+          description: 'The updated member.',
+          content: { 'application/json': { schema: memberResponse } },
+        },
+        '401': commonErrorResponses['401'],
+        '403': commonErrorResponses['403'],
+        '404': commonErrorResponses['404'],
+        '409': commonErrorResponses['409'],
+        '422': commonErrorResponses['422'],
+      },
+    },
+    delete: {
+      operationId: 'deleteWeddingMember',
+      summary: 'Remove a member',
+      description: 'ADMIN only. Cannot remove the wedding’s only active Admin.',
+      tags: ['Members'],
+      security: [{ accessTokenCookie: [] }],
+      responses: {
+        '204': { description: 'The member was removed.' },
+        '401': commonErrorResponses['401'],
+        '403': commonErrorResponses['403'],
+        '404': commonErrorResponses['404'],
+        '409': commonErrorResponses['409'],
+        '422': commonErrorResponses['422'],
       },
     },
   },

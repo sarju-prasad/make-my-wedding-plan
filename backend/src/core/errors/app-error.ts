@@ -75,6 +75,11 @@ export class AppError extends Error {
     });
   }
 
+  /** A 409 for a state conflict that isn't a duplicate-resource case (e.g. CANNOT_REMOVE_LAST_ADMIN). */
+  static conflict(message: string, code: ErrorCode, details?: unknown): AppError {
+    return new AppError({ code, httpStatus: 409, message, details });
+  }
+
   /** api_design.docx §5.2 — a more specific 409 than duplicate() for the one endpoint that names it. */
   static emailAlreadyExists(message = 'An account with this email already exists.'): AppError {
     return new AppError({ code: ErrorCode.EMAIL_ALREADY_EXISTS, httpStatus: 409, message });

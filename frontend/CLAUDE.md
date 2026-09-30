@@ -43,11 +43,20 @@ wired to `../backend`'s `auth`/`weddings` modules:
   live links to Stitch's `lh3.googleusercontent.com` CDN (those links are
   Google-hosted and not guaranteed stable long-term).
 - **`/sign-up`, `/sign-in`, `/forgot-password`, `/reset-password`,
-  `/weddings`** — plain client components (no design reference exists
-  for these; styled by hand with the same design tokens as the homepage,
-  not transcribed from Stitch). `/weddings` doubles as both the
-  create-wedding form and the (very minimal) "your weddings" list — there's
-  no dashboard yet, so this is intentionally the only post-auth page.
+  `/weddings`, `/weddings/[weddingId]`** — plain client components (no
+  design reference exists for the auth pages or the wedding list; styled by
+  hand with the same design tokens as the homepage). `/weddings` is the
+  create-wedding form plus the "your weddings" list; each card links to
+  `/weddings/[weddingId]`, the wedding overview/dashboard page — its
+  visual language (hero card, countdown badge, quick-actions grid) is
+  transcribed from a real but previously-hidden Stitch screen in the same
+  project (`7aa0c8f50a5b4fa9818aed91ba712b7f`, "Wedding Command Center"),
+  cut down to only the sections backed by real data today (no fabricated
+  tasks/RSVP/vendor/budget numbers — those modules don't exist yet, so
+  those sections of that screen weren't built). Its "Wedding team" section
+  (`components/wedding/MembersSection.tsx`) is real: list/add/role-change/
+  remove against the backend's Members API, with ADMIN-only controls shown
+  or hidden based on the viewer's own row in the fetched member list.
   `/reset-password` reads `?token=` via `useSearchParams()`, which Next.js
   requires wrapping in `<Suspense>` for static prerendering to work — see
   that file for the pattern if another page needs `useSearchParams()`.
@@ -55,11 +64,16 @@ wired to `../backend`'s `auth`/`weddings` modules:
   auth (`credentials: 'include'`), unwraps the standard success/error
   envelope, throws `ApiError` on failure. `NEXT_PUBLIC_API_BASE_URL`
   (`.env.example`) points at the backend's `/api/v1`.
+- `src/lib/date.ts` — `formatWeddingDate()`, shared by `/weddings` and
+  `/weddings/[weddingId]`. Always pass the wedding's own `timezone`, not
+  the viewer's — two weddings on the same page can be in different zones.
 - The homepage's `plan-your-wedding` CTAs (Header, Hero, FinalCta) now link
   to `/sign-up`; its `sign-in` links now go to `/sign-in`. Every other
   nav/CTA link is still `#` — no page exists for them yet (see "Open items").
-- Nothing else is built: no dashboard, no guest-facing wedding site, no
-  Manager invites.
+- Still nothing built: guest-facing wedding site, Manager-invite UI, or any
+  of the modules the wedding overview page's quick actions point at
+  (Events, Guests, Tasks, Vendors, Expenses, Wedding Website) — each shows
+  a "Coming soon" state rather than a broken link or fake data.
 
 ## Stack and fixed decisions
 
@@ -106,4 +120,4 @@ Can't resolve '@vercel/turbopack-next/internal/font/google/font'`, in a
   still `#` — no corresponding page or section exists yet.
 - A product decision on the Stay & Travel Desk / real-time-language scope
   note above (see "What exists right now") is still open.
-- No dashboard, guest-facing wedding site, or Manager-invite UI yet.
+- No guest-facing wedding site or Manager-invite UI yet.

@@ -63,10 +63,10 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection.");
   }
 
-  // No endpoint currently returns 204, but core/http/response.ts's
-  // sendNoContent() exists for a future one — res.json() throws a
-  // SyntaxError on an empty body, which would otherwise be misreported as
-  // a malformed response even though the request actually succeeded.
+  // DELETE /weddings/:weddingId/members/:memberId (removeMember() below)
+  // returns 204 — res.json() throws a SyntaxError on an empty body, which
+  // would otherwise be misreported as a malformed response even though the
+  // request actually succeeded.
   if (res.status === 204) {
     return undefined as T;
   }
@@ -121,6 +121,10 @@ export interface Wedding {
   weddingDate: string;
   timezone: string;
   location: { address: string; latitude: number; longitude: number };
+  // Optional and often absent from the response entirely (the backend omits
+  // the key rather than sending null when it was never set) — not every
+  // wedding has one.
+  description?: string;
   language: string;
   status: "ACTIVE" | "ARCHIVED";
   isArchived: boolean;
@@ -172,6 +176,7 @@ export function createWedding(body: {
   weddingDate: string;
   timezone: string;
   location: { address: string; latitude: number; longitude: number };
+  description?: string;
   language?: string;
 }): Promise<{ wedding: Wedding }> {
   return apiFetch("/weddings", { method: "POST", body: JSON.stringify(body) });
@@ -179,4 +184,52 @@ export function createWedding(body: {
 
 export function listMyWeddings(): Promise<{ items: Wedding[]; pagination: Pagination }> {
   return apiFetch("/weddings");
+}
+
+export function getWedding(weddingId: string): Promise<{ wedding: Wedding }> {
+  return apiFetch(`/weddings/${weddingId}`);
+}
+
+export type MemberRole = "ADMIN" | "MANAGER";
+
+export interface Member {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: MemberRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listMembers(
+  weddingId: string,
+  limit = 100,
+): Promise<{ items: Member[]; pagination: Pagination }> {
+  return apiFetch(`/weddings/${weddingId}/members?limit=${limit}`);
+}
+
+export function addMember(
+  weddingId: string,
+  body: { email: string; role: MemberRole },
+): Promise<{ member: Member }> {
+  return apiFetch(`/weddings/${weddingId}/members`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateMemberRole(
+  weddingId: string,
+  memberId: string,
+  role: MemberRole,
+): Promise<{ member: Member }> {
+  return apiFetch(`/weddings/${weddingId}/members/${memberId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function removeMember(weddingId: string, memberId: string): Promise<undefined> {
+  return apiFetch(`/weddings/${weddingId}/members/${memberId}`, { method: "DELETE" });
 }

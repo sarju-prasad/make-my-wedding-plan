@@ -53,6 +53,11 @@ export interface WeddingFields {
   weddingDate: Date;
   timezone: string;
   location: WeddingLocation;
+  // Not in db_design.docx's field list — an additive, optional field (same
+  // category as `slug`/G5) rather than a schema deviation: nothing else
+  // depends on it, and PRD §21's "couple's story" shows the product already
+  // expects free-text wedding description content somewhere.
+  description?: string;
   language: string;
   status: WeddingStatus;
   createdBy: Types.ObjectId;
@@ -77,6 +82,7 @@ const weddingSchema = new Schema<WeddingDocument, WeddingModel, object, SoftArch
       latitude: { type: Number, required: true },
       longitude: { type: Number, required: true },
     },
+    description: { type: String, trim: true },
     language: { type: String, required: true, default: 'en' },
     status: { type: String, enum: WEDDING_STATUS, default: 'ACTIVE', required: true },
     createdBy: { type: 'ObjectId', ref: 'User', required: true },

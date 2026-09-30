@@ -1,36 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { TextField } from "@/components/auth/TextField";
+import { AppHeader } from "@/components/layout/AppHeader";
+import { RetryNotice } from "@/components/layout/RetryNotice";
+import { VenueAddressField, type VenueLocation } from "@/components/wedding/VenueAddressField";
 import {
   ApiError,
   createWedding,
   getCurrentUser,
   listMyWeddings,
-  logoutUser,
   toErrorMessage,
   type User,
   type Wedding,
 } from "@/lib/api";
-
-/**
- * Each wedding carries its own IANA timezone, and two weddings on this page
- * can have different ones — a single module-level formatter can't be
- * correct for both, so this builds one per wedding using its own
- * `timezone` field rather than the viewer's local zone (which is what
- * `new Intl.DateTimeFormat(locale).format(date)` without a `timeZone`
- * option would silently use instead).
- */
-function formatWeddingDate(weddingDateIso: string, timezone: string): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: timezone,
-  }).format(new Date(weddingDateIso));
-}
+import { formatWeddingDate } from "@/lib/date";
 
 interface WeddingFormState {
   name: string;
@@ -38,9 +25,8 @@ interface WeddingFormState {
   partnerTwoName: string;
   weddingDate: string;
   timezone: string;
-  address: string;
-  latitude: string;
-  longitude: string;
+  location: VenueLocation;
+  description: string;
 }
 
 const EMPTY_FORM: WeddingFormState = {
@@ -49,9 +35,8 @@ const EMPTY_FORM: WeddingFormState = {
   partnerTwoName: "",
   weddingDate: "",
   timezone: "Asia/Kolkata",
-  address: "",
-  latitude: "",
-  longitude: "",
+  location: { address: "", latitude: null, longitude: null },
+  description: "",
 };
 
 export default function WeddingsPage() {
@@ -63,6 +48,11 @@ export default function WeddingsPage() {
   const [form, setForm] = useState<WeddingFormState>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Distinct from `submitting`: once true, the create form is replaced by a
+  // transitional message rather than re-enabled, so a slow/stalled
+  // client-side navigation can't leave a live "Create wedding" button for a
+  // second click to fire — see handleCreate.
+  const [redirecting, setRedirecting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadCount, setReloadCount] = useState(0);
 
@@ -109,6 +99,15 @@ export default function WeddingsPage() {
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
     setError(null);
+
+    const { address, latitude, longitude } = form.location;
+    if (!address || latitude === null || longitude === null) {
+      setError("Please select a venue address from the suggestions.");
+      return;
+    }
+
+    const description = form.description.trim();
+
     setSubmitting(true);
     try {
       const { wedding } = await createWedding({
@@ -116,74 +115,56 @@ export default function WeddingsPage() {
         couple: { partnerOneName: form.partnerOneName, partnerTwoName: form.partnerTwoName },
         weddingDate: form.weddingDate,
         timezone: form.timezone,
-        location: {
-          address: form.address,
-          latitude: Number(form.latitude),
-          longitude: Number(form.longitude),
-        },
+        location: { address, latitude, longitude },
+        // Omitted entirely when blank, matching the backend's genuinely-
+        // optional (key-absent-if-unset) field, rather than sent as "".
+        ...(description ? { description } : {}),
       });
-      setWeddings((prev) => [wedding, ...prev]);
-      setForm(EMPTY_FORM);
-      setShowForm(false);
+      // The list page re-fetches on every mount, so there's no need to patch
+      // local state before leaving — going back here will show the new
+      // wedding anyway. `submitting` is deliberately left true (see
+      // `redirecting` below) rather than reset here: re-enabling the button
+      // while router.push() is still in flight would let a fast second
+      // click fire a real duplicate createWedding() request.
+      setRedirecting(true);
+      router.push(`/weddings/${wedding.id}`);
     } catch (err) {
       setError(toErrorMessage(err));
-    } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleSignOut() {
-    await logoutUser().catch(() => undefined);
-    router.push("/");
-  }
-
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-surface">
-        <p className="font-body-md text-body-md text-on-surface-variant">Loading…</p>
+      <div className="min-h-screen bg-surface">
+        <AppHeader user={user} />
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <p className="font-body-md text-body-md text-on-surface-variant">Loading…</p>
+        </div>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-space-md bg-surface px-margin-mobile text-center">
-        <p className="font-body-md text-body-md text-on-surface-variant">{loadError}</p>
-        <button
-          type="button"
-          onClick={() => {
-            setLoading(true);
-            setReloadCount((n) => n + 1);
-          }}
-          className="rounded-lg bg-primary-container px-space-lg py-space-sm font-label-lg text-label-lg text-on-primary transition-all hover:bg-secondary"
-        >
-          Try again
-        </button>
+      <div className="min-h-screen bg-surface">
+        <AppHeader user={user} />
+        <div className="flex min-h-[60vh] flex-col items-center justify-center px-margin-mobile">
+          <RetryNotice
+            message={loadError}
+            onRetry={() => {
+              setLoading(true);
+              setReloadCount((n) => n + 1);
+            }}
+          />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-surface">
-      <header className="flex items-center justify-between border-b border-surface-container-high px-margin-mobile py-space-md lg:px-margin">
-        <div className="flex flex-col">
-          <span className="font-headline-sm text-headline-sm text-primary">
-            Make My Wedding Plan
-          </span>
-          {user && (
-            <span className="font-body-sm text-body-sm text-on-surface-variant">
-              Signed in as {user.name}
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleSignOut()}
-          className="rounded-lg bg-surface-container-high px-space-md py-space-sm font-label-lg text-label-lg text-on-surface transition-all hover:bg-surface-container"
-        >
-          Sign out
-        </button>
-      </header>
+      <AppHeader user={user} />
 
       <main className="mx-auto flex max-w-3xl flex-col gap-space-xl px-margin-mobile py-space-xl lg:px-margin">
         {weddings.length > 0 && (
@@ -191,9 +172,10 @@ export default function WeddingsPage() {
             <h2 className="font-headline-lg text-headline-lg text-on-surface">Your weddings</h2>
             <div className="flex flex-col gap-space-sm">
               {weddings.map((wedding) => (
-                <div
+                <Link
                   key={wedding.id}
-                  className="flex flex-col gap-1 rounded-xl bg-surface-container-lowest p-space-lg shadow-sm"
+                  href={`/weddings/${wedding.id}`}
+                  className="flex flex-col gap-1 rounded-xl bg-surface-container-lowest p-space-lg shadow-sm transition-all hover:bg-surface-container-low"
                 >
                   <span className="font-headline-sm text-headline-sm text-on-surface">
                     {wedding.name}
@@ -205,7 +187,7 @@ export default function WeddingsPage() {
                   <span className="font-label-sm text-label-sm text-primary uppercase">
                     make-my-wedding-plan.app/w/{wedding.slug}
                   </span>
-                </div>
+                </Link>
               ))}
             </div>
             {!showForm && (
@@ -220,7 +202,15 @@ export default function WeddingsPage() {
           </section>
         )}
 
-        {showForm && (
+        {showForm && redirecting && (
+          <section className="flex flex-col items-center gap-space-sm rounded-xl bg-surface-container-lowest p-space-xl text-center shadow-sm">
+            <p className="font-body-md text-body-md text-on-surface-variant">
+              Wedding created — taking you to your wedding workspace…
+            </p>
+          </section>
+        )}
+
+        {showForm && !redirecting && (
           <section className="flex flex-col gap-space-md rounded-xl bg-surface-container-lowest p-space-xl shadow-sm">
             <div className="flex flex-col gap-1">
               <h2 className="font-headline-lg text-headline-lg text-on-surface">
@@ -274,33 +264,29 @@ export default function WeddingsPage() {
                   hint="An IANA timezone, e.g. Asia/Kolkata"
                 />
               </div>
-              <TextField
-                label="Venue address"
-                name="address"
-                value={form.address}
-                onChange={(v) => updateField("address", v)}
-                required
+              <VenueAddressField
+                value={form.location}
+                onChange={(location) => updateField("location", location)}
               />
-              <div className="grid grid-cols-1 gap-space-md sm:grid-cols-2">
-                <TextField
-                  label="Venue latitude"
-                  type="number"
-                  step="any"
-                  name="latitude"
-                  value={form.latitude}
-                  onChange={(v) => updateField("latitude", v)}
-                  required
-                  placeholder="24.5762"
-                />
-                <TextField
-                  label="Venue longitude"
-                  type="number"
-                  step="any"
-                  name="longitude"
-                  value={form.longitude}
-                  onChange={(v) => updateField("longitude", v)}
-                  required
-                  placeholder="73.6833"
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="description"
+                  className="font-label-lg text-label-lg text-on-surface"
+                >
+                  Wedding description{" "}
+                  <span className="font-body-sm text-body-sm text-on-surface-variant">
+                    (optional)
+                  </span>
+                </label>
+                <textarea
+                  id="description"
+                  name="description"
+                  value={form.description}
+                  onChange={(e) => updateField("description", e.target.value)}
+                  maxLength={2000}
+                  rows={3}
+                  placeholder="A little about your celebration…"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-space-md py-space-sm font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
                 />
               </div>
 

@@ -119,13 +119,12 @@ passwords, public wedding search, custom domains, a full website builder.
   against a cluster you've otherwise confirmed supports transactions,
   restart the dev server before assuming it's a code bug.
 - **Money** is stored as integer paise, currency INR.
-- **`authorize()` is real but has no call site yet.** `middleware/authorize.ts`
-  checks `req.auth.role` against whatever roles you pass it, but no route
-  currently mounts it — all three implemented wedding endpoints are open to
-  any ACTIVE member, ADMIN or MANAGER alike, which happens to be correct
-  for create/list/view. The first ADMIN-only route (update/archive/restore)
-  has no existing call site to copy `authorize('ADMIN')` from — don't wire
-  `loadMembership` onto a restricted route without also adding it.
+- **`authorize()` now has real call sites** — every mutating members route
+  (`POST/PATCH/DELETE /weddings/:weddingId/members...`) mounts
+  `authorize('ADMIN')` after `loadMembership`. Copy that pattern for the next
+  ADMIN-only route rather than reinventing it. The three original wedding
+  endpoints (create/list/view) stay open to any ACTIVE member, ADMIN or
+  MANAGER alike, which is still correct for those.
 
 ## Workflow
 
@@ -144,7 +143,6 @@ Recorded here so they are not silently decided in code.
 
 | Ref | Issue                                                                                             |
 | --- | ------------------------------------------------------------------------------------------------- |
-| G1  | The Manager invite-by-email flow has no token, collection or endpoint anywhere                    |
 | G2  | Guest **groups** and group-level RSVP rollup are required by PRD §12/§16, absent from DB and API  |
 | C2  | PRD §29 requires planned **and** actual expense amounts; the schema stores a single `amountPaise` |
 | G3  | `tasks` has no `eventId` or `vendorId`, contradicting PRD §26/§28                                 |
@@ -160,7 +158,8 @@ If a task requires one of these, raise it rather than choosing an interpretation
 
 ### Resolved
 
-| Ref | Issue                                                                                               | Resolution                                                                                                                                                                                                |
-| --- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C1  | PRD §8 mandates **passwordless** auth; DB, API and architecture docs all specify Argon2id passwords | Raised to the user (2026-09-27); decided **password (Argon2id)**, matching DB/API/architecture docs over the PRD. Implemented in `modules/auth/`.                                                         |
-| G5  | No wedding **slug**, so the `/w/couple-name` URL in PRD §19 cannot be served                        | Added `weddings.slug` (unique-indexed, auto-generated from partner names with collision suffixing — see `utils/slug.ts` and `modules/weddings/weddings.service.ts`) in the auth+wedding-creation feature. |
+| Ref | Issue                                                                                               | Resolution                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | PRD §8 mandates **passwordless** auth; DB, API and architecture docs all specify Argon2id passwords | Raised to the user (2026-09-27); decided **password (Argon2id)**, matching DB/API/architecture docs over the PRD. Implemented in `modules/auth/`.                                                                                                                                                                                                                                                       |
+| G5  | No wedding **slug**, so the `/w/couple-name` URL in PRD §19 cannot be served                        | Added `weddings.slug` (unique-indexed, auto-generated from partner names with collision suffixing — see `utils/slug.ts` and `modules/weddings/weddings.service.ts`) in the auth+wedding-creation feature.                                                                                                                                                                                               |
+| G1  | The Manager invite-by-email flow has no token, collection or endpoint anywhere                      | Built as `POST /weddings/:weddingId/members` — adds an existing registered user by email (api_design.docx §9: "Validate that the target user exists"), not a pending-invite-token flow for an email with no account, since C1 already chose password accounts over PRD §8's passwordless design. ADMIN-only; enforces at least one active ADMIN per wedding. See `modules/weddings/members.service.ts`. |

@@ -1,7 +1,12 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../../src/app.js';
+// Reaching into the module's internal model, rather than its service entry
+// point, only to simulate a mid-transaction failure below — there's no other
+// way to force the second write of a two-write transaction to fail without
+// this. Not a pattern to copy for anything other than this one atomicity test.
+import { WeddingMember } from '../../src/modules/weddings/members.model.js';
 
 const app = createApp();
 
@@ -56,6 +61,46 @@ describe('POST /api/v1/weddings', () => {
 
     expect(getRes.status).toBe(200);
     expect(getRes.body.data.wedding.id).toBe(weddingId);
+  });
+
+  it('accepts an optional description and returns it on both create and get', async () => {
+    const cookies = await registerUser();
+
+    const createRes = await post('/api/v1/weddings')
+      .set('Cookie', cookies)
+      .send({ ...VALID_WEDDING, description: 'A small backyard ceremony with close family.' });
+
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.data.wedding.description).toBe(
+      'A small backyard ceremony with close family.',
+    );
+
+    const weddingId = createRes.body.data.wedding.id as string;
+    const getRes = await request(app).get(`/api/v1/weddings/${weddingId}`).set('Cookie', cookies);
+
+    expect(getRes.body.data.wedding.description).toBe(
+      'A small backyard ceremony with close family.',
+    );
+  });
+
+  it('omits description from the response entirely when not provided', async () => {
+    const cookies = await registerUser();
+
+    const createRes = await post('/api/v1/weddings').set('Cookie', cookies).send(VALID_WEDDING);
+
+    expect(createRes.status).toBe(201);
+    expect('description' in createRes.body.data.wedding).toBe(false);
+  });
+
+  it('rejects a description longer than 2000 characters', async () => {
+    const cookies = await registerUser();
+
+    const res = await post('/api/v1/weddings')
+      .set('Cookie', cookies)
+      .send({ ...VALID_WEDDING, description: 'x'.repeat(2001) });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('assigns different slugs to two weddings with the same partner names', async () => {
@@ -126,6 +171,99 @@ describe('POST /api/v1/weddings', () => {
   });
 });
 
+describe('POST /api/v1/weddings — required-field validation', () => {
+  const REQUIRED_FIELD_PATHS = [
+    'name',
+    'couple.partnerOneName',
+    'couple.partnerTwoName',
+    'weddingDate',
+    'timezone',
+    'location',
+    'location.address',
+    'location.latitude',
+    'location.longitude',
+  ];
+
+  // Non-null assertions are fine in tests (see eslint.config.js) — every
+  // path in REQUIRED_FIELD_PATHS is a literal dotted path into VALID_WEDDING,
+  // so each segment is guaranteed to exist; noUncheckedIndexedAccess just
+  // can't see that statically.
+  function withFieldOmitted(path: string): Record<string, unknown> {
+    const clone = structuredClone(VALID_WEDDING) as Record<string, unknown>;
+    const keys = path.split('.');
+    let target = clone;
+    for (let i = 0; i < keys.length - 1; i += 1) {
+      target = target[keys[i]!] as Record<string, unknown>;
+    }
+    Reflect.deleteProperty(target, keys[keys.length - 1]!);
+    return clone;
+  }
+
+  it.each(REQUIRED_FIELD_PATHS)('rejects a request missing %s', async (path) => {
+    const cookies = await registerUser();
+
+    const res = await post('/api/v1/weddings').set('Cookie', cookies).send(withFieldOmitted(path));
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects invalid input types (latitude as a string, weddingDate as a number)', async () => {
+    const cookies = await registerUser();
+
+    const res = await post('/api/v1/weddings')
+      .set('Cookie', cookies)
+      .send({
+        ...VALID_WEDDING,
+        weddingDate: 20261114,
+        location: { ...VALID_WEDDING.location, latitude: '24.5762' },
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  // api_design.docx §22 / §52: createdBy, status, and role are system-derived
+  // and must never come from the client — the schema's `.strict()` rejects
+  // the whole request outright rather than silently dropping them, which is a
+  // stronger guarantee than merely ignoring them.
+  it('rejects a request that tries to set createdBy, status, or role', async () => {
+    const cookies = await registerUser();
+
+    const res = await post('/api/v1/weddings')
+      .set('Cookie', cookies)
+      .send({
+        ...VALID_WEDDING,
+        createdBy: '507f1f77bcf86cd799439099',
+        status: 'ARCHIVED',
+        role: 'ADMIN',
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('POST /api/v1/weddings — atomicity', () => {
+  it('rolls back wedding creation if membership creation fails mid-transaction', async () => {
+    const cookies = await registerUser();
+    const spy = vi
+      .spyOn(WeddingMember, 'create')
+      .mockRejectedValueOnce(new Error('simulated membership failure'));
+
+    try {
+      const res = await post('/api/v1/weddings').set('Cookie', cookies).send(VALID_WEDDING);
+      expect(res.status).toBe(500);
+      expect(res.body.error.code).toBe('INTERNAL_SERVER_ERROR');
+    } finally {
+      spy.mockRestore();
+    }
+
+    const listRes = await request(app).get('/api/v1/weddings').set('Cookie', cookies);
+    expect(listRes.body.data.items).toHaveLength(0);
+  });
+});
+
 describe('GET /api/v1/weddings', () => {
   it('lists only the weddings the caller belongs to', async () => {
     const cookiesA = await registerUser();
@@ -146,6 +284,17 @@ describe('GET /api/v1/weddings', () => {
 });
 
 describe('GET /api/v1/weddings/:weddingId — cross-wedding access', () => {
+  it('requires authentication', async () => {
+    const owner = await registerUser();
+    const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+    const weddingId = createRes.body.data.wedding.id as string;
+
+    const res = await request(app).get(`/api/v1/weddings/${weddingId}`);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
   it("a non-member cannot read another user's wedding (WEDDING_NOT_FOUND, not FORBIDDEN)", async () => {
     const owner = await registerUser();
     const stranger = await registerUser();
@@ -154,6 +303,26 @@ describe('GET /api/v1/weddings/:weddingId — cross-wedding access', () => {
     const weddingId = createRes.body.data.wedding.id as string;
 
     const res = await request(app).get(`/api/v1/weddings/${weddingId}`).set('Cookie', stranger);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('WEDDING_NOT_FOUND');
+  });
+
+  // A real DELETE /weddings/:weddingId/members/:memberId exists now
+  // (members.service.ts), but it refuses to remove a wedding's only active
+  // ADMIN — exactly the state this test needs (the wedding's sole member,
+  // removed). That's the correct business rule, not a gap in this test: it
+  // still flips the wedding_members row directly, same as the atomicity
+  // test above, to verify the wedding-access check itself behaves
+  // correctly against a REMOVED membership, however one arises.
+  it('a removed member cannot read the wedding (WEDDING_NOT_FOUND, not FORBIDDEN)', async () => {
+    const owner = await registerUser();
+    const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+    const weddingId = createRes.body.data.wedding.id as string;
+
+    await WeddingMember.updateOne({ weddingId, role: 'ADMIN' }, { $set: { status: 'REMOVED' } });
+
+    const res = await request(app).get(`/api/v1/weddings/${weddingId}`).set('Cookie', owner);
 
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('WEDDING_NOT_FOUND');

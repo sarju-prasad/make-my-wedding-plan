@@ -29,6 +29,8 @@ export interface WeddingMemberAttrs {
   role: MemberRole;
   status: MemberStatus;
   createdBy: Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export type WeddingMemberModel = Model<WeddingMemberAttrs>;
