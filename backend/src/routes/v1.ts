@@ -14,6 +14,8 @@ import { Router } from 'express';
 
 import { authRouter } from '../modules/auth/auth.routes.js';
 import '../modules/auth/auth.openapi.js';
+import { eventsRouter } from '../modules/events/events.routes.js';
+import '../modules/events/events.openapi.js';
 import { healthRouter } from '../modules/health/health.routes.js';
 import '../modules/health/health.openapi.js';
 import { weddingsRouter } from '../modules/weddings/weddings.routes.js';
@@ -24,3 +26,4 @@ export const v1Router: Router = Router();
 v1Router.use(healthRouter);
 v1Router.use(authRouter);
 v1Router.use(weddingsRouter);
+v1Router.use(eventsRouter);

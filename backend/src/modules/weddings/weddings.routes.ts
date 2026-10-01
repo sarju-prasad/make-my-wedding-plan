@@ -1,6 +1,10 @@
 /**
- * api_design.docx §8.1, §9. Wedding: only create/list/view are implemented —
- * update, archive, and restore are deferred (see doc/project_status.md).
+ * api_design.docx §8.1, §9. Wedding: create/list/view/update are
+ * implemented — archive and restore are deferred (see
+ * doc/project_status.md). PATCH is ADMIN-only: PRD §9 lists "manage wedding
+ * information" under Admin's permissions and conspicuously not under
+ * Manager's (§10), unlike create/list/view, which stay open to any ACTIVE
+ * member.
  * Members: full invite/list/update-role/remove — the first real call site
  * for middleware/authorize.ts (backend/CLAUDE.md flagged this as unwired).
  */
@@ -18,8 +22,17 @@ import {
   memberIdParamsSchema,
   updateMemberBodySchema,
 } from './members.validation.js';
-import { getMyWeddings, getWeddingById, postCreateWedding } from './weddings.controller.js';
-import { createWeddingBodySchema, weddingIdParamsSchema } from './weddings.validation.js';
+import {
+  getMyWeddings,
+  getWeddingById,
+  patchWedding,
+  postCreateWedding,
+} from './weddings.controller.js';
+import {
+  createWeddingBodySchema,
+  updateWeddingBodySchema,
+  weddingIdParamsSchema,
+} from './weddings.validation.js';
 
 export const weddingsRouter: Router = Router();
 
@@ -43,6 +56,15 @@ weddingsRouter.get(
   validate({ params: weddingIdParamsSchema }),
   loadMembership,
   getWeddingById,
+);
+
+weddingsRouter.patch(
+  '/weddings/:weddingId',
+  authenticate,
+  validate({ params: weddingIdParamsSchema, body: updateWeddingBodySchema }),
+  loadMembership,
+  authorize('ADMIN'),
+  patchWedding,
 );
 
 weddingsRouter.get(

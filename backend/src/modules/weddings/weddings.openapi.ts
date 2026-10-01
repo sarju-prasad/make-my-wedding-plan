@@ -17,7 +17,7 @@ import { WEDDING_STATUS } from './weddings.model.js';
 // version), so createWeddingBodySchema's weddingDate stays documented as
 // the date-only string clients actually send, not the Date it transforms
 // into internally.
-import { createWeddingBodySchema } from './weddings.validation.js';
+import { createWeddingBodySchema, updateWeddingBodySchema } from './weddings.validation.js';
 
 const weddingSchema = z.object({
   id: z.string(),
@@ -107,6 +107,25 @@ registerModulePaths({
         },
         '401': commonErrorResponses['401'],
         '404': commonErrorResponses['404'],
+      },
+    },
+    patch: {
+      operationId: 'patchWedding',
+      summary: 'Update wedding details',
+      description:
+        'ADMIN only (PRD §9/§10: Admin manages wedding information, Manager does not). Partial update — only supplied top-level fields change. `couple`/`location`, if supplied, must be given in full (not merged field-by-field). `weddingDate`/`timezone` may be supplied independently — supplying only one reinterprets the wedding’s existing value for the other. `slug` is immutable and not accepted here.',
+      tags: ['Weddings'],
+      security: [{ accessTokenCookie: [] }],
+      requestBody: { content: { 'application/json': { schema: updateWeddingBodySchema } } },
+      responses: {
+        '200': {
+          description: 'The updated wedding.',
+          content: { 'application/json': { schema: weddingResponse } },
+        },
+        '401': commonErrorResponses['401'],
+        '403': commonErrorResponses['403'],
+        '404': commonErrorResponses['404'],
+        '422': commonErrorResponses['422'],
       },
     },
   },

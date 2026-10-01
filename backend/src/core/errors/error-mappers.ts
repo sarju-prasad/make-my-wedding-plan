@@ -111,6 +111,22 @@ export function mapKnownError(error: unknown): AppError | null {
     return AppError.validation('Document failed schema validation.', details);
   }
 
+  // Thrown by `.save()` on a document whose schema has `optimisticConcurrency:
+  // true` (weddings.model.ts) when another write landed first — e.g. two
+  // concurrent PATCH requests, each computed from the same stale read of a
+  // field neither of them was actually changing (weddings.service.ts's
+  // updateWedding() reconciling weddingDate/timezone when only one was
+  // supplied). A 409 telling the client to refresh and retry is correct
+  // here; silently letting the second save win would reintroduce exactly
+  // the "stored value mismatched with what it was derived from" bug that
+  // logic exists to prevent.
+  if (error instanceof MongooseError.VersionError) {
+    return AppError.conflict(
+      'This record was changed by someone else. Please refresh and try again.',
+      ErrorCode.CONCURRENT_UPDATE,
+    );
+  }
+
   // Duplicate-key violations (E11000) surface unique-index conflicts, such as
   // one active invitation per guest per wedding — see db_design.docx §7.
   // Module-specific translations (e.g. users.email -> EMAIL_ALREADY_EXISTS)

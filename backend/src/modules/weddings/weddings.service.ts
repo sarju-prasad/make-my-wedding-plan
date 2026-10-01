@@ -2,6 +2,7 @@
  * db_design.docx §9, api_design.docx §22: creating a wedding and its first
  * membership record must succeed or fail together, hence the transaction.
  */
+import { DateTime } from 'luxon';
 import mongoose, { Types } from 'mongoose';
 
 import { AppError, ErrorCode } from '#core/errors/index.js';
@@ -10,7 +11,7 @@ import { buildWeddingSlugBase } from '#utils/slug.js';
 
 import { WeddingMember, type MemberRole } from './members.model.js';
 import { Wedding, type WeddingDocument } from './weddings.model.js';
-import type { CreateWeddingBody } from './weddings.validation.js';
+import type { CreateWeddingBody, UpdateWeddingBody } from './weddings.validation.js';
 
 const MAX_SLUG_SUFFIX_ATTEMPTS = 20;
 
@@ -180,5 +181,100 @@ export async function getWedding(weddingId: string): Promise<WeddingDocument> {
   if (!wedding) {
     throw AppError.notFound('Wedding not found.', ErrorCode.WEDDING_NOT_FOUND);
   }
+  return wedding;
+}
+
+/**
+ * ADMIN-only authorization is enforced entirely by middleware
+ * (loadMembership + authorize('ADMIN') in weddings.routes.ts), not
+ * re-checked here — same pattern as members.service.ts's
+ * updateMemberRole/removeMember, which rely on the same middleware chain
+ * rather than duplicating the role check in the service layer.
+ *
+ * `slug` is deliberately never touched here, even though it's derived from
+ * `couple`'s names at creation (reserveUniqueSlug, above) — regenerating it
+ * when couple names change would invalidate any already-shared guest-facing
+ * `/w/<slug>` link (PRD §19), which is a real, concrete harm with no
+ * corresponding requirement asking for it. Slug is immutable after
+ * creation; this endpoint's Zod schema doesn't even accept a `slug` field.
+ *
+ * Fields are assigned individually (not a bulk `Object.assign`) so each one
+ * only touches what the client actually supplied — `couple`/`location`,
+ * when supplied, replace the whole embedded object (weddings.validation.ts
+ * requires them complete, never partial) rather than being merged field by
+ * field, which is what actually prevents e.g. a lone `address` update from
+ * leaving a now-inconsistent stale latitude/longitude in place.
+ */
+export async function updateWedding(
+  weddingId: string,
+  body: UpdateWeddingBody,
+): Promise<WeddingDocument> {
+  const wedding = await Wedding.findById(weddingId).excludeArchived();
+  if (!wedding) {
+    throw AppError.notFound('Wedding not found.', ErrorCode.WEDDING_NOT_FOUND);
+  }
+
+  if (body.name !== undefined) {
+    wedding.name = body.name;
+  }
+  if (body.description !== undefined) {
+    // An explicit empty string means "clear it" — `.set()` (not a direct
+    // property assignment, which `exactOptionalPropertyTypes` would reject
+    // for an `undefined` value against `description?: string`) marks the
+    // path for removal on save, restoring the same "key genuinely absent
+    // from the response" state a wedding created without one has.
+    wedding.set('description', body.description === '' ? undefined : body.description);
+  }
+  if (body.couple !== undefined) {
+    wedding.couple = body.couple;
+  }
+  if (body.location !== undefined) {
+    wedding.location = body.location;
+  }
+  if (body.weddingDate !== undefined || body.timezone !== undefined) {
+    const newTimezone = body.timezone ?? wedding.timezone;
+
+    // Only one of the two was supplied — reinterpret in terms of the
+    // wedding's *existing* value for the other field, rather than silently
+    // leaving the stored absolute instant mismatched with its own
+    // timezone label:
+    //   - timezone only: keep the same calendar date, recomputed as
+    //     midnight in the *new* timezone (PATCH { timezone } is expected to
+    //     "only change timezone" — leaving the UTC instant untouched would
+    //     actually change which calendar day the wedding falls on once
+    //     re-rendered in the new zone, which is the opposite of that).
+    //   - weddingDate only: combine the new date with the *existing*
+    //     timezone, exactly like createWeddingBodySchema's own transform.
+    let newWeddingDate: DateTime;
+    if (body.weddingDate !== undefined) {
+      newWeddingDate = DateTime.fromISO(body.weddingDate, { zone: newTimezone });
+    } else {
+      const existingLocalDate = DateTime.fromJSDate(wedding.weddingDate, { zone: 'utc' }).setZone(
+        wedding.timezone,
+      );
+      newWeddingDate = DateTime.fromObject(
+        {
+          year: existingLocalDate.year,
+          month: existingLocalDate.month,
+          day: existingLocalDate.day,
+        },
+        { zone: newTimezone },
+      );
+    }
+
+    if (!newWeddingDate.isValid) {
+      throw AppError.validation(
+        `Invalid date${body.weddingDate ? ` "${body.weddingDate}"` : ''} for timezone "${newTimezone}".`,
+        [{ path: 'weddingDate', message: newWeddingDate.invalidReason ?? 'Invalid date.' }],
+      );
+    }
+
+    wedding.weddingDate = newWeddingDate.toJSDate();
+    if (body.timezone !== undefined) {
+      wedding.timezone = body.timezone;
+    }
+  }
+
+  await wedding.save();
   return wedding;
 }

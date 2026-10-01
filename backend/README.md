@@ -158,11 +158,16 @@ MongoDB instance):
   single-use SHA-256-hashed reset tokens that expire in 1 hour and bump
   `tokenVersion` (invalidating every session) on use
 - `weddings` module: create (transactional — wedding + the creator's ADMIN
-  `wedding_members` row together), list mine, view one — every wedding gets
-  an auto-generated unique `slug`. Members: list, add by email (ADMIN only —
-  the target must already have an account), change role, remove — the
-  first real call site for `authorize()`; enforces at least one active ADMIN
-  per wedding
+  `wedding_members` row together), list mine, view one, update (`PATCH`,
+  ADMIN only — partial update, `weddingDate`/`timezone` may be supplied
+  independently, protected by `optimisticConcurrency` against a concurrent
+  read-modify-write race) — every wedding gets an auto-generated unique
+  `slug`, immutable after creation. Members: list, add by email (ADMIN
+  only — the target must already have an account), change role, remove —
+  the first real call site for `authorize()`; enforces at least one active
+  ADMIN per wedding
+- `events` module: create, list, view — wedding-scoped, any active member
+  (Admin or Manager). Update/cancel/archive/restore not built yet.
 - OpenAPI document generation from the Zod schemas (`npm run openapi:generate`),
   served via Scalar outside production
 - Cloudflare R2 integration shell (client + error mapping only — unverified
@@ -171,15 +176,15 @@ MongoDB instance):
   fallback (the reset link comes back in the response body, never logged)
   when it isn't
 - Test harness: Vitest + `mongodb-memory-server` (single-node replica set),
-  192 real tests, plus the still-open required security test cases from
+  255 real tests, plus the still-open required security test cases from
   `api_design.docx` §23 tracked as visible `it.todo(...)` placeholders
 - Git hooks (Husky: pre-commit, commit-msg, pre-push) and GitHub Actions CI
 
 Not yet implemented:
 
-- Guest/invitation/RSVP, events, tasks, vendors, expenses, wedding website,
-  photos, announcements — see [doc/project_status.md](../doc/project_status.md)
-  for what's next
+- Guest/invitation/RSVP, event update/cancel/archive, tasks, vendors,
+  expenses, wedding website, photos, announcements — see
+  [doc/project_status.md](../doc/project_status.md) for what's next
 - Every item under [Open decisions](CLAUDE.md#open-decisions) in CLAUDE.md
 - R2 and Resend were verified only at the "does the client construct
   correctly" level — not against real credentials or a real bucket/account

@@ -8,19 +8,24 @@ infrastructure — not for every small commit. Add new entries to the top of
 the **Progress Log**, and keep **Current Status** in sync with the latest
 entry.
 
-## Current Status (as of 2026-09-30)
+## Current Status (as of 2026-10-01)
 
 - **Backend** (`backend/`): scaffolded and verified (Express + TypeScript +
-  MongoDB, npm workspace). Two business modules are mounted: `health`
-  (`/healthz`, `/readyz`) and `auth` + `weddings`. `auth` covers
+  MongoDB, npm workspace). Three business modules are mounted: `health`
+  (`/healthz`, `/readyz`), `auth` + `weddings`, and `events`. `auth` covers
   register/login/refresh/logout/me and forgot-password/reset-password
   (Argon2id, JWT cookies, single-use hashed reset tokens, generic
   responses that don't reveal account existence). `weddings` covers
-  create/list/view a wedding (creator becomes ADMIN, optional description)
-  and full member management — list, add by email (ADMIN only, target must
-  already have an account), change role, remove, with at least one active
-  ADMIN always enforced. No guest, invitation, event, RSVP, task, vendor,
-  expense, website, or announcement modules yet. See
+  create/list/view/**update** a wedding (creator becomes ADMIN, optional
+  description; update is `PATCH`, ADMIN only, a partial update — `slug` is
+  immutable, `weddingDate`/`timezone` may be supplied independently of each
+  other, protected against a concurrent read-modify-write race via
+  Mongoose's `optimisticConcurrency`) and full member management — list,
+  add by email (ADMIN only, target must already have an account), change
+  role, remove, with at least one active ADMIN always enforced. `events`
+  covers create/list/view only (wedding-scoped, any active member) — no
+  update/cancel/archive/restore yet. No guest, invitation, RSVP, task,
+  vendor, expense, website, or announcement modules yet. See
   [backend/CLAUDE.md](../backend/CLAUDE.md) for stack decisions and open
   product/design questions.
 - **Frontend** (`frontend/`): scaffolded (Next.js 16 + Tailwind v4). The
@@ -32,7 +37,9 @@ entry.
   (couple names, countdown, wedding details, a "Wedding team" members
   section, an events empty state, and a quick-actions grid to the not-yet-
   built modules) transcribed from a real but previously-unused Stitch
-  screen, "Wedding Command Center." Still no guest-facing site. See
+  screen, "Wedding Command Center." Still no guest-facing site, and no
+  frontend yet for either the Events APIs or the wedding-edit `PATCH`
+  endpoint (both backend-only so far). See
   [frontend/CLAUDE.md](../frontend/CLAUDE.md).
 - **Repo tooling**: npm-workspaces monorepo, shared git hooks
   (`.husky/` + `lint-staged.config.mjs`) confirmed working end-to-end, CI
@@ -51,6 +58,75 @@ entry.
   the dev server before assuming it's a code bug").
 
 ## Progress Log
+
+### 2026-10-01 — Events module (backend) + Edit Wedding Details (backend), review fixes applied
+
+Two backend-only feature slices, built and reviewed together; no frontend
+work in either yet.
+
+**Events module** (`modules/events/`) — api_design.docx §10,
+db_design.docx §5/§6: `POST`/`GET /weddings/:weddingId/events` and
+`GET .../events/:eventId`. Wedding-scoped, open to any active member
+(Admin or Manager) — no `authorize()` restriction, matching the PRD's
+permission tables. `venue`/`livestream` are optional structured sub-objects
+(the latter deliberately an object with a required `url`, not a bare
+string, to leave room for a future `recordingUrl` with no migration).
+Soft-archive plugin applied to the schema now even though archive/restore
+endpoints don't exist yet (schema-ready, matching the `weddings` precedent).
+Only create/list/view exist — update/cancel/archive/restore are deferred.
+27 new tests (validation, auth/membership 401/404, cross-wedding isolation
+checked in both directions for both list and get).
+
+**Edit Wedding Details** — `PATCH /api/v1/weddings/:weddingId`, ADMIN only
+(PRD §9/§10: Admin manages wedding information, Manager doesn't). A true
+partial update: only supplied top-level fields change; `couple`/`location`,
+if supplied, must be given in full (not deep-merged, to avoid stale
+lat/long after an address-only edit); `weddingDate`/`timezone` may be
+supplied independently of each other — supplying only one reinterprets the
+wedding's existing stored value for the other via Luxon, rather than
+requiring both together. `slug` is permanently immutable (not accepted by
+this endpoint at all) — it's derived from `couple` at creation, not `name`,
+and regenerating it on update would break any already-shared guest-facing
+`/w/<slug>` link (PRD §19). ~35 new tests (auth, cross-wedding/removed-
+member/non-Admin rejection, per-field validation, partial-update-preserves-
+the-rest for every field including hand-verified exact timestamps for the
+weddingDate-only/timezone-only cases, a 10-payload protected-field-rejection
+matrix, slug immutability, persistence).
+
+A review pass over the combined diff found a real concurrency bug and three
+smaller issues, all fixed:
+
+- **`updateWedding()`'s weddingDate/timezone reconciliation was an
+  unprotected read-modify-write race.** Two concurrent `PATCH` requests
+  each supplying only one of the two fields could each compute their result
+  from the same stale read of the other, and the second save would
+  silently overwrite the first — reproducing the exact "stored instant
+  mismatched with its own timezone label" bug this logic exists to
+  prevent. Mongoose's default `__v` versioning does *not* guard this (it
+  only protects conflicting array operations); fixed by adding
+  `optimisticConcurrency: true` to the `Wedding` schema and mapping the
+  resulting `VersionError` to a new `409 CONCURRENT_UPDATE` response.
+  Added a regression test that fires two genuinely concurrent partial
+  updates and asserts exactly one succeeds.
+- `wedding.timezone` was being unconditionally reassigned even when only
+  `weddingDate` changed — now only reassigned when the request actually
+  supplied a new one.
+- A comment on `events.service.ts`'s `omitUndefinedValues` claimed a
+  runtime necessity (stripping `undefined` out of a partially-filled
+  `venue`) that isn't real — Zod never materializes an absent optional key
+  as an explicit `undefined` at parse time. Corrected: it's purely a
+  `exactOptionalPropertyTypes` type-level fix.
+- `listEvents`'s pagination sorted by `startsAt` alone, with no tiebreaker —
+  two events sharing a start time would make page boundaries
+  nondeterministic. Added an `_id` tiebreaker.
+
+Documented but not fixed: `createEvent` doesn't re-verify the parent
+wedding is still active/unarchived (relies entirely on `loadMembership`'s
+ACTIVE-membership check) — currently unreachable, since no wedding-archive
+endpoint exists yet, but will need the same `excludeArchived()` guard
+`weddings.service.ts` already uses once one does.
+
+255 backend tests (up from 192), 15 OpenAPI paths (up from 13).
 
 ### 2026-09-30 — Code review pass on Overview/Members/venue-autocomplete, fixes applied
 

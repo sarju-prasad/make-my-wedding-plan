@@ -87,7 +87,18 @@ const weddingSchema = new Schema<WeddingDocument, WeddingModel, object, SoftArch
     status: { type: String, enum: WEDDING_STATUS, default: 'ACTIVE', required: true },
     createdBy: { type: 'ObjectId', ref: 'User', required: true },
   },
-  { timestamps: true },
+  // `optimisticConcurrency: true` — plain `__v` tracking (the default)
+  // only guards conflicting *array* operations; it does not, by itself,
+  // make a plain `.save()` reject a write based on a stale read of a
+  // scalar/embedded field. weddings.service.ts's updateWedding() has a
+  // real read-modify-write step (reconciling weddingDate/timezone when a
+  // PATCH supplies only one of the two, using the *other's* currently-
+  // loaded value) — without this option, two concurrent PATCH requests
+  // could each compute their result from the same stale read and the
+  // second save would silently overwrite the first rather than erroring.
+  // With it, that second `.save()` throws VersionError, mapped to a 409
+  // CONCURRENT_UPDATE by core/errors/error-mappers.ts.
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 weddingSchema.index({ status: 1, weddingDate: 1 });

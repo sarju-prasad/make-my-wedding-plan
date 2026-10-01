@@ -17,6 +17,14 @@ function post(path: string) {
   return request(app).post(path).set('Origin', ALLOWED_ORIGIN);
 }
 
+function patch(path: string) {
+  return request(app).patch(path).set('Origin', ALLOWED_ORIGIN);
+}
+
+function del(path: string) {
+  return request(app).delete(path).set('Origin', ALLOWED_ORIGIN);
+}
+
 const VALID_WEDDING = {
   name: 'Ananya & Arjun',
   couple: { partnerOneName: 'Ananya', partnerTwoName: 'Arjun' },
@@ -36,6 +44,17 @@ async function registerUser(): Promise<string[]> {
     password: 'correct-horse-battery',
   });
   return res.headers['set-cookie'] as unknown as string[];
+}
+
+/** Same as registerUser(), but also returns the email — needed to add this user as a member by email. */
+async function registerUserWithEmail(): Promise<{ cookies: string[]; email: string }> {
+  const cookies = await registerUser();
+  return { cookies, email: `wedding-test-${userCounter}@example.com` };
+}
+
+async function createWedding(cookies: string[]): Promise<string> {
+  const res = await post('/api/v1/weddings').set('Cookie', cookies).send(VALID_WEDDING);
+  return res.body.data.wedding.id as string;
 }
 
 describe('POST /api/v1/weddings', () => {
@@ -349,5 +368,433 @@ describe('GET /api/v1/weddings/:weddingId — cross-wedding access', () => {
 
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('PATCH /api/v1/weddings/:weddingId', () => {
+  it('requires authentication', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`).send({ name: 'New Name' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('an ADMIN can update their own wedding', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`).set('Cookie', owner).send({
+      name: 'Updated Name',
+      description: 'An updated description',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.wedding).toMatchObject({
+      name: 'Updated Name',
+      description: 'An updated description',
+    });
+  });
+
+  it("cannot update another user's wedding (WEDDING_NOT_FOUND, not FORBIDDEN)", async () => {
+    const ownerA = await registerUser();
+    const ownerB = await registerUser();
+    const weddingA = await createWedding(ownerA);
+    const weddingB = await createWedding(ownerB);
+
+    const resAonB = await patch(`/api/v1/weddings/${weddingB}`)
+      .set('Cookie', ownerA)
+      .send({ name: 'Hijacked' });
+    expect(resAonB.status).toBe(404);
+    expect(resAonB.body.error.code).toBe('WEDDING_NOT_FOUND');
+
+    const resBonA = await patch(`/api/v1/weddings/${weddingA}`)
+      .set('Cookie', ownerB)
+      .send({ name: 'Hijacked' });
+    expect(resBonA.status).toBe(404);
+    expect(resBonA.body.error.code).toBe('WEDDING_NOT_FOUND');
+  });
+
+  it('a removed member cannot update the wedding (WEDDING_NOT_FOUND, not FORBIDDEN)', async () => {
+    const admin = await registerUser();
+    const removed = await registerUserWithEmail();
+    const weddingId = await createWedding(admin);
+
+    const addRes = await post(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', admin)
+      .send({ email: removed.email, role: 'MANAGER' });
+    const memberId = addRes.body.data.member.id as string;
+    await del(`/api/v1/weddings/${weddingId}/members/${memberId}`).set('Cookie', admin);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', removed.cookies)
+      .send({ name: 'Should not apply' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('WEDDING_NOT_FOUND');
+  });
+
+  it('an active MANAGER (non-ADMIN) cannot update the wedding', async () => {
+    const admin = await registerUser();
+    const manager = await registerUserWithEmail();
+    const weddingId = await createWedding(admin);
+
+    await post(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', admin)
+      .send({ email: manager.email, role: 'MANAGER' });
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', manager.cookies)
+      .send({ name: 'Should not apply' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('rejects an empty PATCH body', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`).set('Cookie', owner).send({});
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an empty name', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ name: '   ' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a description over 2000 characters', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ description: 'x'.repeat(2001) });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an empty partner name', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ couple: { partnerOneName: '', partnerTwoName: 'Someone' } });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a malformed weddingDate', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ weddingDate: 'not-a-date' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an invalid timezone', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ timezone: 'NotATimezone' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an empty location address', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ location: { address: '', latitude: 1, longitude: 1 } });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an out-of-range latitude', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ location: { address: 'Somewhere', latitude: 999, longitude: 1 } });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an out-of-range longitude', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ location: { address: 'Somewhere', latitude: 1, longitude: 999 } });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an incomplete location (missing latitude)', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ location: { address: 'Somewhere', longitude: 1 } });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects unknown fields', async () => {
+    const owner = await registerUser();
+    const weddingId = await createWedding(owner);
+
+    const res = await patch(`/api/v1/weddings/${weddingId}`)
+      .set('Cookie', owner)
+      .send({ favoriteColor: 'teal' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  describe('partial update preserves unrelated fields', () => {
+    it('updating only name preserves couple/date/timezone/location/description', async () => {
+      const owner = await registerUser();
+      const createRes = await post('/api/v1/weddings')
+        .set('Cookie', owner)
+        .send({ ...VALID_WEDDING, description: 'Original description' });
+      const weddingId = createRes.body.data.wedding.id as string;
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ name: 'Only Name Changed' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding).toMatchObject({
+        name: 'Only Name Changed',
+        description: 'Original description',
+        couple: VALID_WEDDING.couple,
+        timezone: VALID_WEDDING.timezone,
+        location: VALID_WEDDING.location,
+      });
+    });
+
+    it('updating only description preserves all other fields', async () => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ description: 'Only description changed' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding).toMatchObject({
+        name: VALID_WEDDING.name,
+        description: 'Only description changed',
+        couple: VALID_WEDDING.couple,
+        location: VALID_WEDDING.location,
+      });
+    });
+
+    it('updating only weddingDate (no timezone) combines it with the existing timezone and preserves other fields', async () => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ weddingDate: '2026-12-25' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding.timezone).toBe(VALID_WEDDING.timezone);
+      expect(res.body.data.wedding.name).toBe(VALID_WEDDING.name);
+      expect(res.body.data.wedding.location).toMatchObject(VALID_WEDDING.location);
+      // Asia/Kolkata is UTC+5:30 — midnight local on 2026-12-25 is 2026-12-24T18:30:00Z.
+      expect(res.body.data.wedding.weddingDate).toBe('2026-12-24T18:30:00.000Z');
+    });
+
+    it('updating only timezone (no weddingDate) keeps the same calendar day, reinterpreted in the new timezone', async () => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ timezone: 'America/Los_Angeles' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding.name).toBe(VALID_WEDDING.name);
+      expect(res.body.data.wedding.location).toMatchObject(VALID_WEDDING.location);
+      expect(res.body.data.wedding.timezone).toBe('America/Los_Angeles');
+      // The wedding's calendar date in its own (new) timezone must still be
+      // 2026-11-14 — the same date it was in the old timezone — not shifted
+      // by reinterpreting the raw UTC instant naively.
+      const stored = new Date(res.body.data.wedding.weddingDate as string);
+      const localDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(stored);
+      expect(localDate).toBe('2026-11-14');
+    });
+
+    it('updating location does not erase name/couple/date/description', async () => {
+      const owner = await registerUser();
+      const createRes = await post('/api/v1/weddings')
+        .set('Cookie', owner)
+        .send({ ...VALID_WEDDING, description: 'Keep me' });
+      const weddingId = createRes.body.data.wedding.id as string;
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({
+          location: { address: 'New Venue', latitude: 10, longitude: 20 },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding).toMatchObject({
+        name: VALID_WEDDING.name,
+        description: 'Keep me',
+        couple: VALID_WEDDING.couple,
+        location: { address: 'New Venue', latitude: 10, longitude: 20 },
+      });
+    });
+  });
+
+  describe('protected fields cannot be changed through this endpoint', () => {
+    const MALICIOUS_PAYLOADS = [
+      { createdBy: '507f1f77bcf86cd799439099' },
+      { id: '507f1f77bcf86cd799439099' },
+      { _id: '507f1f77bcf86cd799439099' },
+      { createdAt: '2000-01-01T00:00:00.000Z' },
+      { updatedAt: '2000-01-01T00:00:00.000Z' },
+      { isArchived: true },
+      { archivedAt: '2000-01-01T00:00:00.000Z' },
+      { archivedBy: '507f1f77bcf86cd799439099' },
+      { status: 'ARCHIVED' },
+      { slug: 'hijacked-slug' },
+    ];
+
+    it.each(MALICIOUS_PAYLOADS)('rejects a payload trying to set %j', async (payload) => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`).set('Cookie', owner).send(payload);
+
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('data integrity', () => {
+    it('updatedAt changes after a successful update', async () => {
+      const owner = await registerUser();
+      const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+      const weddingId = createRes.body.data.wedding.id as string;
+      const originalUpdatedAt = createRes.body.data.wedding.updatedAt as string;
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ name: 'Changed' });
+
+      expect(res.status).toBe(200);
+      expect(new Date(res.body.data.wedding.updatedAt as string).getTime()).toBeGreaterThan(
+        new Date(originalUpdatedAt).getTime(),
+      );
+    });
+
+    it('persists the update — a subsequent GET reflects the new values', async () => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ name: 'Persisted Name' });
+
+      const getRes = await request(app).get(`/api/v1/weddings/${weddingId}`).set('Cookie', owner);
+
+      expect(getRes.body.data.wedding.name).toBe('Persisted Name');
+    });
+  });
+
+  describe('concurrent updates', () => {
+    it('two concurrent weddingDate/timezone-only updates: one succeeds, the other gets 409 CONCURRENT_UPDATE', async () => {
+      const owner = await registerUser();
+      const weddingId = await createWedding(owner);
+
+      // Both requests read the same pre-update document (optimisticConcurrency:
+      // true on the Wedding schema — weddings.model.ts) before either saves,
+      // simulating two admins editing at once. Without that option, the second
+      // save would silently overwrite the first using its stale read of the
+      // field it wasn't even changing, rather than erroring.
+      const [first, second] = await Promise.all([
+        patch(`/api/v1/weddings/${weddingId}`)
+          .set('Cookie', owner)
+          .send({ weddingDate: '2026-12-25' }),
+        patch(`/api/v1/weddings/${weddingId}`)
+          .set('Cookie', owner)
+          .send({ timezone: 'America/Los_Angeles' }),
+      ]);
+
+      const statuses = [first.status, second.status].sort((a, b) => a - b);
+      expect(statuses).toEqual([200, 409]);
+
+      const failed = first.status === 409 ? first : second;
+      expect(failed.body.error.code).toBe('CONCURRENT_UPDATE');
+    });
+  });
+
+  describe('slug is immutable', () => {
+    it('updating the wedding name does not change the slug', async () => {
+      const owner = await registerUser();
+      const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+      const weddingId = createRes.body.data.wedding.id as string;
+      const originalSlug = createRes.body.data.wedding.slug as string;
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ name: 'A Completely Different Name' });
+
+      expect(res.body.data.wedding.slug).toBe(originalSlug);
+    });
+
+    it('updating the couple names (which the slug is actually derived from) does not change the slug', async () => {
+      const owner = await registerUser();
+      const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+      const weddingId = createRes.body.data.wedding.id as string;
+      const originalSlug = createRes.body.data.wedding.slug as string;
+
+      const res = await patch(`/api/v1/weddings/${weddingId}`)
+        .set('Cookie', owner)
+        .send({ couple: { partnerOneName: 'Different', partnerTwoName: 'Names' } });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.wedding.slug).toBe(originalSlug);
+    });
   });
 });
