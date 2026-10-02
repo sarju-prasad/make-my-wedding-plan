@@ -8,7 +8,7 @@ infrastructure — not for every small commit. Add new entries to the top of
 the **Progress Log**, and keep **Current Status** in sync with the latest
 entry.
 
-## Current Status (as of 2026-10-01)
+## Current Status (as of 2026-10-02)
 
 - **Backend** (`backend/`): scaffolded and verified (Express + TypeScript +
   MongoDB, npm workspace). Three business modules are mounted: `health`
@@ -33,13 +33,19 @@ entry.
   export. `/sign-up`, `/sign-in`, `/forgot-password`, `/reset-password`, and
   `/weddings` (create + minimal list, no real design reference — styled by
   hand) are wired to the backend's `auth`/`weddings` modules. Each wedding
-  card now opens `/weddings/[weddingId]`, an overview/dashboard page
-  (couple names, countdown, wedding details, a "Wedding team" members
-  section, an events empty state, and a quick-actions grid to the not-yet-
-  built modules) transcribed from a real but previously-unused Stitch
-  screen, "Wedding Command Center." Still no guest-facing site, and no
-  frontend yet for either the Events APIs or the wedding-edit `PATCH`
-  endpoint (both backend-only so far). See
+  card opens `/weddings/[weddingId]`, an overview/dashboard page (couple
+  names, countdown, wedding details, an "Edit Wedding" button, a "Wedding
+  team" members section, a real Events preview, and a quick-actions grid to
+  the not-yet-built modules) transcribed from a real but previously-unused
+  Stitch screen, "Wedding Command Center." `/weddings/[weddingId]/edit`
+  (prefilled partial-update form for name/description/couple/date/
+  timezone/location, Cancel with an unsaved-changes guard, ADMIN-gated) and
+  the full Events frontend — `/weddings/[weddingId]/events` (list),
+  `.../events/new` (create), `.../events/[eventId]` (details) — are now
+  built against the backend's `weddings` PATCH and `events` APIs, each
+  transcribed from its own real Stitch screen. Still no guest-facing site,
+  and no frontend yet for Events update/cancel/archive/restore (those
+  backend endpoints don't exist either). See
   [frontend/CLAUDE.md](../frontend/CLAUDE.md).
 - **Repo tooling**: npm-workspaces monorepo, shared git hooks
   (`.husky/` + `lint-staged.config.mjs`) confirmed working end-to-end, CI
@@ -58,6 +64,83 @@ entry.
   the dev server before assuming it's a code bug").
 
 ## Progress Log
+
+### 2026-10-02 — Edit Wedding + Events frontend, two review-and-fix passes applied
+
+Frontend-only; no backend changes (confirmed via diff before and after every
+review pass in this entry).
+
+**Edit Wedding** (`/weddings/[weddingId]/edit`) — transcribed from the real
+Stitch "Edit Wedding Details" screen. Prefills every field from the current
+wedding (timezone kept as free text, not the mock's 4-option dropdown, so a
+wedding on an unlisted zone still prefills correctly, consistent with the
+create-wedding form); `couple`/`location`, if changed, are sent in full
+(matching the backend's own all-or-nothing semantics for those fields).
+Cancel shows a discard-changes modal only when the form is actually dirty
+(compared with trimmed strings and epsilon-tolerant coordinates, so
+re-selecting an unchanged venue or editing only whitespace doesn't falsely
+flag as unsaved); a `beforeunload` guard also covers real browser navigation
+away. ADMIN-gated via the same member-list-lookup technique `MembersSection`
+already uses, not re-derived. An "Edit Wedding" button was added to the
+Overview hero section.
+
+**Events** — `/weddings/[weddingId]/events` (list), `.../events/new`
+(create), `.../events/[eventId]` (details), each transcribed from the real
+Stitch "Events Section" screen (its search/filter/view-toggle chrome and
+Event Details' fabricated detail chips were dropped — none were wired to
+anything real in the mock, and building fake chrome would have been exactly
+the "fake affordance" this app has consistently avoided elsewhere). No
+Edit/Cancel/Archive controls, since those backend endpoints don't exist.
+Create Event combines separate date/start-time/end-time/timezone inputs
+into the ISO-8601-with-offset strings the Events API actually expects —
+there's no server-side date+timezone combination step for events the way
+there is for a wedding's own `weddingDate`. The Overview page's old "No
+events added yet" placeholder is now a real preview (upcoming events only,
+"View all events (N)", "+ Add Event"); the sidebar's "Events" item is now a
+real, route-aware active link instead of "Coming soon."
+
+Two review-and-fix passes against the diff (one after Edit Wedding frontend
+landed, one after Events frontend landed), plus a third, separate
+verification-only pass at the end that found nothing new:
+
+- **Edit Wedding frontend**: the location fields stayed fully interactive
+  during submit, so a last-second venue change made while the PATCH was in
+  flight was silently discarded — now locked during submit. The Google
+  Places autocomplete widget has no supported way to show its own existing
+  value, so editing a wedding with a venue already set looked like an empty
+  field — added a "Current venue: …" indicator above the widget. A stale
+  weddingId/form could stay rendered and editable across a client-side
+  route change between two different weddings' edit pages — now resets on
+  every `weddingId` change. The discard-changes modal had no focus trap.
+- **Events frontend**: overnight events (e.g. 10 PM–1 AM) were impossible
+  to create — the end-time check assumed start/end fell on the same
+  calendar day; now auto-rolls to the next day instead of rejecting a
+  normal reception/Sangeet time range. The date+time→UTC-offset conversion
+  had a real, verified-live bug (New Zealand's 2026 DST transition produced
+  the wrong offset for perfectly ordinary times, not just a theoretical
+  edge case) — fixed with a two-probe refinement. `daysUntilWedding` had no
+  try/catch unlike its sibling helpers, and this diff added a new call site
+  rendering it directly on Event Details — could crash the page for a
+  timezone the viewer's browser can't construct; now returns `null`
+  defensively, like every other date helper in this file. The Overview
+  Events preview showed the chronologically-first events with no
+  future-only filter, so a wedding with enough past events could show none
+  of what's actually upcoming — fixed, with a distinct "no upcoming events"
+  state (vs. the full empty state) when a wedding has history but nothing
+  ahead. Also extracted duplicated validation-error-mapping and
+  status-badge logic that had already started to drift between files.
+
+Verified after every pass: `npm run typecheck` / `npx eslint .` / `npm run
+build` clean. Also live-smoke-tested the actual save/create flows against
+the real backend, both on first build and again after the overnight-event
+fix — exact stored-instant verification for the date/timezone math, 422
+field-error shapes, and correct `201` acceptance of an overnight event; the
+`daysUntilWedding`-hardening and upcoming-events-filter fixes are pure
+client-side logic with no backend round-trip to verify live, so those were
+confirmed by typecheck plus direct reasoning through the diffed code
+instead. No automated frontend tests — this workspace still has no test
+runner (`frontend/CLAUDE.md`'s own open item, not something either of
+these features introduced).
 
 ### 2026-10-01 — Events module (backend) + Edit Wedding Details (backend), review fixes applied
 

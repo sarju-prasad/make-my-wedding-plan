@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { Icon } from "@/components/marketing/Icon";
@@ -12,11 +13,10 @@ interface NavItem {
 }
 
 // Matches the approved Stitch design's full module list ("Wedding Command
-// Center"). Only Overview is a real route today — every other module is
+// Center"). Overview and Events are real routes; every other module is
 // unbuilt (see doc/project_status.md), so each shows "Coming soon" instead
 // of navigating anywhere or rendering fabricated data.
 const NAV_ITEMS: NavItem[] = [
-  { key: "events", label: "Events", icon: "event_available" },
   { key: "guests", label: "Guests", icon: "group" },
   { key: "invitations", label: "Invitations", icon: "mail" },
   { key: "rsvp", label: "RSVP", icon: "how_to_reg" },
@@ -59,7 +59,46 @@ function ComingSoonNavItem({ item }: { item: NavItem }) {
   );
 }
 
+/** A real (not "coming soon") sidebar nav link, styled to match the Overview link's active/inactive treatment. */
+function NavLink({
+  href,
+  icon,
+  label,
+  active,
+}: {
+  href: string;
+  icon: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={
+        active
+          ? "flex items-center gap-space-sm rounded-lg bg-primary-container px-space-md py-2.5 font-bold text-on-primary shadow-[0_1px_3px_rgba(26,25,23,0.04)] transition-all"
+          : "flex items-center gap-space-sm rounded-lg px-space-md py-2.5 text-on-surface-variant transition-all hover:bg-surface-container-high hover:text-on-surface"
+      }
+    >
+      <Icon name={icon} className="text-[20px]" />
+      <span>{label}</span>
+    </Link>
+  );
+}
+
 export function WeddingSidebar({ weddingId }: { weddingId: string }) {
+  const pathname = usePathname();
+  const overviewHref = `/weddings/${weddingId}`;
+  const eventsHref = `/weddings/${weddingId}/events`;
+  // startsWith, not ===, for Events — /new and /[eventId] sub-routes should
+  // still show Events as the active section. Overview only matches its own
+  // exact path, so a sub-route like /edit correctly leaves both unhighlighted
+  // rather than (as before this had any route-awareness at all) always
+  // showing Overview as active regardless of where you actually are.
+  const isEventsActive = pathname?.startsWith(eventsHref) ?? false;
+  const isOverviewActive = pathname === overviewHref;
+
   return (
     <aside className="fixed top-0 left-0 z-40 hidden h-full w-72 flex-col bg-surface-container-lowest shadow-[0_1px_8px_rgba(0,0,0,0.04)] lg:flex">
       <div className="flex h-20 items-center gap-space-sm bg-surface-container-low/50 px-space-lg">
@@ -85,13 +124,18 @@ export function WeddingSidebar({ weddingId }: { weddingId: string }) {
           </span>
         </div>
         <nav className="space-y-1">
-          <Link
-            href={`/weddings/${weddingId}`}
-            className="flex items-center gap-space-sm rounded-lg bg-primary-container px-space-md py-2.5 font-bold text-on-primary shadow-[0_1px_3px_rgba(26,25,23,0.04)] transition-all"
-          >
-            <Icon name="grid_view" className="text-[20px]" />
-            <span>Overview</span>
-          </Link>
+          <NavLink
+            href={overviewHref}
+            icon="grid_view"
+            label="Overview"
+            active={isOverviewActive}
+          />
+          <NavLink
+            href={eventsHref}
+            icon="event_available"
+            label="Events"
+            active={isEventsActive}
+          />
           {NAV_ITEMS.map((item) => (
             <ComingSoonNavItem key={item.key} item={item} />
           ))}

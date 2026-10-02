@@ -28,6 +28,37 @@ export function toErrorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Something went wrong. Please try again.";
 }
 
+/**
+ * Maps a 422 `VALIDATION_ERROR`'s `details` (error-mappers.ts's
+ * formatZodIssues: `{path, message}[]`, `path` dotted for a nested field)
+ * onto a form's own flat field keys via `pathMap`, so a backend validation
+ * error highlights the actual input the user needs to fix. Every other
+ * error falls back to the same form-level message `toErrorMessage` gives.
+ *
+ * Shared by every form on a per-field-error model (Edit Wedding, Create
+ * Event) rather than each redefining this — `pathMap` is the only thing
+ * that differs between them.
+ */
+export function mapValidationError(
+  err: unknown,
+  pathMap: Record<string, string> = {},
+): { fieldErrors: Record<string, string>; message: string } {
+  if (err instanceof ApiError && err.code === "VALIDATION_ERROR" && Array.isArray(err.details)) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of err.details as { path?: unknown; message?: unknown }[]) {
+      if (typeof issue?.path !== "string" || typeof issue.message !== "string") continue;
+      const key = pathMap[issue.path] ?? issue.path;
+      // Several backend paths can collapse onto one form key (e.g. both
+      // location.latitude and location.longitude only have one slot to show
+      // an error in) — append rather than overwrite, so two simultaneous
+      // issues on the same key don't silently drop one of them.
+      fieldErrors[key] = fieldErrors[key] ? `${fieldErrors[key]} ${issue.message}` : issue.message;
+    }
+    return { fieldErrors, message: err.message };
+  }
+  return { fieldErrors: {}, message: toErrorMessage(err) };
+}
+
 interface SuccessEnvelope<T> {
   success: true;
   data: T;
@@ -190,6 +221,29 @@ export function getWedding(weddingId: string): Promise<{ wedding: Wedding }> {
   return apiFetch(`/weddings/${weddingId}`);
 }
 
+/**
+ * Mirrors the backend's updateWeddingBodySchema: every field is independently
+ * optional, but `couple`/`location`, if sent at all, must be given in full
+ * (not deep-merged) — see weddings.validation.ts. `slug`/`language`/every
+ * system-controlled field are deliberately absent; the backend's `.strict()`
+ * would reject them outright rather than silently ignore them.
+ */
+export interface UpdateWeddingBody {
+  name?: string;
+  description?: string;
+  couple?: { partnerOneName: string; partnerTwoName: string };
+  weddingDate?: string;
+  timezone?: string;
+  location?: { address: string; latitude: number; longitude: number };
+}
+
+export function updateWedding(
+  weddingId: string,
+  body: UpdateWeddingBody,
+): Promise<{ wedding: Wedding }> {
+  return apiFetch(`/weddings/${weddingId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
 export type MemberRole = "ADMIN" | "MANAGER";
 
 export interface Member {
@@ -232,4 +286,64 @@ export function updateMemberRole(
 
 export function removeMember(weddingId: string, memberId: string): Promise<undefined> {
   return apiFetch(`/weddings/${weddingId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export type EventStatus = "DRAFT" | "ACTIVE" | "CANCELLED" | "ARCHIVED";
+
+export interface EventVenue {
+  name?: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  googleMapsUrl?: string;
+}
+
+// Named `WeddingEvent`, not `Event` — the DOM's own global `Event` type would
+// otherwise be shadowed everywhere this is imported.
+export interface WeddingEvent {
+  id: string;
+  weddingId: string;
+  name: string;
+  startsAt: string;
+  endsAt?: string;
+  timezone: string;
+  description?: string;
+  venue?: EventVenue;
+  status: EventStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getEvents(
+  weddingId: string,
+  limit = 100,
+): Promise<{ items: WeddingEvent[]; pagination: Pagination }> {
+  return apiFetch(`/weddings/${weddingId}/events?limit=${limit}`);
+}
+
+/**
+ * Mirrors createEventBodySchema: `startsAt`/`endsAt` are full ISO 8601
+ * date-times with an explicit offset (see lib/date.ts's
+ * combineDateTimeWithOffset, which builds these from the form's separate
+ * date/time/timezone fields) — there's no server-side combination step for
+ * events the way there is for a wedding's own `weddingDate`.
+ */
+export interface CreateEventBody {
+  name: string;
+  startsAt: string;
+  endsAt?: string;
+  timezone: string;
+  description?: string;
+  venue?: { name?: string; address?: string };
+}
+
+export function createEvent(
+  weddingId: string,
+  body: CreateEventBody,
+): Promise<{ event: WeddingEvent }> {
+  return apiFetch(`/weddings/${weddingId}/events`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getEvent(weddingId: string, eventId: string): Promise<{ event: WeddingEvent }> {
+  return apiFetch(`/weddings/${weddingId}/events/${eventId}`);
 }

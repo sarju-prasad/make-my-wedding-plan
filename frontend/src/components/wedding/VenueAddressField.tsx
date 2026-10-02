@@ -4,6 +4,7 @@ import Script from "next/script";
 import { useEffect, useRef, useState } from "react";
 
 import { TextField } from "@/components/auth/TextField";
+import { Icon } from "@/components/marketing/Icon";
 
 export interface VenueLocation {
   address: string;
@@ -123,15 +124,27 @@ export function VenueAddressField({
           *
         </span>
       </label>
+      {/* The autocomplete widget below is always a fresh, empty search box —
+          it has no supported way to pre-fill its visible text with an
+          existing value, so when editing a venue that's already set, this is
+          the only thing that actually shows the current value. Shown above
+          the widget, not just a caption below it, so it can't be mistaken
+          for an empty field. */}
+      {value.address && (
+        <div className="flex items-center gap-2 rounded-lg bg-surface-container-low px-space-md py-space-sm">
+          <Icon name="place" className="text-[18px] text-primary" />
+          <span className="font-body-sm text-body-sm text-on-surface">
+            Current venue: <strong>{value.address}</strong>
+          </span>
+        </div>
+      )}
       <div ref={containerRef} />
+      <p className="font-body-sm text-body-sm text-on-surface-variant">
+        {value.address ? "Search to change the venue." : "Search for the venue address."}
+      </p>
       {pickError && (
         <span className="font-body-sm text-body-sm text-error" role="alert">
           {pickError}
-        </span>
-      )}
-      {value.address && (
-        <span className="font-body-sm text-body-sm text-on-surface-variant">
-          Selected: {value.address}
         </span>
       )}
     </div>

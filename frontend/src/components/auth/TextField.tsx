@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 interface TextFieldProps {
   label: string;
@@ -11,6 +11,11 @@ interface TextFieldProps {
   placeholder?: string;
   hint?: string;
   step?: string;
+  /** Replaces `hint` with an error message, styled to match, and wires up aria-invalid/aria-describedby. */
+  error?: string;
+  disabled?: boolean;
+  /** Rendered at the opposite end of the label row — e.g. a live preview pill. */
+  labelAddon?: ReactNode;
 }
 
 export function TextField({
@@ -24,22 +29,29 @@ export function TextField({
   placeholder,
   hint,
   step,
+  error,
+  disabled,
+  labelAddon,
 }: TextFieldProps) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
   const inputType = isPassword && showPassword ? "text" : type;
+  const helperId = `${name}-helper`;
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={name} className="font-label-lg text-label-lg text-on-surface">
-        {label}
-        {required && (
-          <span className="text-error" aria-hidden="true">
-            {" "}
-            *
-          </span>
-        )}
-      </label>
+      <div className="flex items-center justify-between gap-space-sm">
+        <label htmlFor={name} className="font-label-lg text-label-lg text-on-surface">
+          {label}
+          {required && (
+            <span className="text-error" aria-hidden="true">
+              {" "}
+              *
+            </span>
+          )}
+        </label>
+        {labelAddon}
+      </div>
       <div className="relative">
         <input
           id={name}
@@ -51,7 +63,14 @@ export function TextField({
           autoComplete={autoComplete}
           placeholder={placeholder}
           step={step}
-          className={`w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-space-md py-space-sm font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none ${isPassword ? "pr-11" : ""}`}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error || hint ? helperId : undefined}
+          className={`w-full rounded-lg border bg-surface-container-lowest px-space-md py-space-sm font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:ring-2 focus:outline-none disabled:opacity-60 ${
+            error
+              ? "border-error focus:border-error focus:ring-error/20"
+              : "border-outline-variant focus:border-primary focus:ring-primary/20"
+          } ${isPassword ? "pr-11" : ""}`}
         />
         {isPassword && (
           <button
@@ -66,7 +85,17 @@ export function TextField({
           </button>
         )}
       </div>
-      {hint && <span className="font-body-sm text-body-sm text-on-surface-variant">{hint}</span>}
+      {error ? (
+        <span id={helperId} role="alert" className="font-body-sm text-body-sm text-error">
+          {error}
+        </span>
+      ) : (
+        hint && (
+          <span id={helperId} className="font-body-sm text-body-sm text-on-surface-variant">
+            {hint}
+          </span>
+        )
+      )}
     </div>
   );
 }

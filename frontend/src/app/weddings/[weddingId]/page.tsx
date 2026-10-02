@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -7,6 +8,7 @@ import { AppHeader } from "@/components/layout/AppHeader";
 import { RetryNotice } from "@/components/layout/RetryNotice";
 import { WeddingSidebar } from "@/components/layout/WeddingSidebar";
 import { Icon } from "@/components/marketing/Icon";
+import { EventsPreview } from "@/components/wedding/EventsPreview";
 import { MembersSection } from "@/components/wedding/MembersSection";
 import {
   ApiError,
@@ -26,9 +28,9 @@ interface QuickAction {
 
 // None of these modules exist yet (see doc/project_status.md) — every quick
 // action surfaces a "coming soon" state instead of linking anywhere, per this
-// task's explicit scope limit.
+// task's explicit scope limit. Events has its own real section below instead
+// of a "coming soon" entry here now that it's built.
 const QUICK_ACTIONS: QuickAction[] = [
-  { key: "events", label: "Events", icon: "event_available" },
   { key: "guests", label: "Guests", icon: "group" },
   { key: "tasks", label: "Tasks", icon: "checklist" },
   { key: "vendors", label: "Vendors", icon: "storefront" },
@@ -169,28 +171,42 @@ export default function WeddingOverviewPage() {
 
         <main className="mx-auto flex max-w-5xl flex-col gap-space-xl px-margin-mobile py-space-xl lg:px-margin">
           <section className="rounded-2xl bg-surface-container-lowest p-space-lg shadow-sm lg:p-space-xl">
-            <div className="flex flex-col gap-space-xs">
-              <div className="flex flex-wrap items-center gap-space-sm">
-                <h1 className="font-headline-lg text-headline-lg text-on-surface">
-                  {wedding.couple.partnerOneName} &amp; {wedding.couple.partnerTwoName}
-                </h1>
-                <span className="rounded-full bg-secondary-fixed px-space-md py-1 font-label-sm text-label-sm font-bold tracking-wide text-on-secondary-fixed uppercase">
-                  {countdownLabel(days)}
-                </span>
-              </div>
-              <p className="font-body-lg text-body-lg text-on-surface-variant">{wedding.name}</p>
-              <p className="font-body-md text-body-md flex flex-wrap items-center gap-2 text-on-surface-variant">
-                <Icon name="calendar_month" className="text-[18px] text-outline" />
-                <span>{formatWeddingDate(wedding.weddingDate, wedding.timezone)}</span>
-                <span className="text-outline">&middot;</span>
-                <Icon name="location_on" className="text-[18px] text-outline" />
-                <span>{wedding.location.address}</span>
-              </p>
-              {wedding.description && (
-                <p className="font-body-md text-body-md mt-space-xs text-on-surface-variant">
-                  {wedding.description}
+            <div className="flex flex-col gap-space-md md:flex-row md:items-start md:justify-between">
+              <div className="flex flex-col gap-space-xs">
+                <div className="flex flex-wrap items-center gap-space-sm">
+                  <h1 className="font-headline-lg text-headline-lg text-on-surface">
+                    {wedding.couple.partnerOneName} &amp; {wedding.couple.partnerTwoName}
+                  </h1>
+                  {days !== null && (
+                    <span className="rounded-full bg-secondary-fixed px-space-md py-1 font-label-sm text-label-sm font-bold tracking-wide text-on-secondary-fixed uppercase">
+                      {countdownLabel(days)}
+                    </span>
+                  )}
+                </div>
+                <p className="font-body-lg text-body-lg text-on-surface-variant">{wedding.name}</p>
+                <p className="font-body-md text-body-md flex flex-wrap items-center gap-2 text-on-surface-variant">
+                  <Icon name="calendar_month" className="text-[18px] text-outline" />
+                  <span>{formatWeddingDate(wedding.weddingDate, wedding.timezone)}</span>
+                  <span className="text-outline">&middot;</span>
+                  <Icon name="location_on" className="text-[18px] text-outline" />
+                  <span>{wedding.location.address}</span>
                 </p>
-              )}
+                {wedding.description && (
+                  <p className="font-body-md text-body-md mt-space-xs text-on-surface-variant">
+                    {wedding.description}
+                  </p>
+                )}
+              </div>
+              <Link
+                href={`/weddings/${weddingId}/edit`}
+                className="group inline-flex shrink-0 items-center gap-2.5 self-start rounded-lg bg-primary px-space-lg py-2.5 font-label-lg text-label-lg text-on-primary shadow-md transition-all hover:bg-primary-container hover:shadow-lg"
+              >
+                <Icon
+                  name="edit_calendar"
+                  className="text-[19px] transition-transform group-hover:rotate-12"
+                />
+                <span>Edit Wedding</span>
+              </Link>
             </div>
           </section>
 
@@ -220,21 +236,7 @@ export default function WeddingOverviewPage() {
 
           {user && <MembersSection weddingId={weddingId} currentUserId={user.id} />}
 
-          <section className="rounded-xl bg-surface-container-lowest p-space-lg shadow-sm">
-            <div className="flex flex-col items-center gap-space-sm py-space-lg text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-low text-primary">
-                <Icon name="event_available" className="text-[28px]" />
-              </div>
-              <h2 className="font-headline-sm text-headline-sm text-on-surface">
-                No events added yet
-              </h2>
-              <p className="font-body-sm text-body-sm max-w-md text-on-surface-variant">
-                Schedule your wedding&apos;s ceremonies — Haldi, Mehndi, the wedding day, reception,
-                and more.
-              </p>
-              <ComingSoonButton icon="add" label="Add your first event" />
-            </div>
-          </section>
+          <EventsPreview weddingId={weddingId} />
 
           <section className="flex flex-col gap-space-md">
             <h2 className="font-headline-sm text-headline-sm text-on-surface">Quick actions</h2>
