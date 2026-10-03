@@ -347,3 +347,77 @@ export function createEvent(
 export function getEvent(weddingId: string, eventId: string): Promise<{ event: WeddingEvent }> {
   return apiFetch(`/weddings/${weddingId}/events/${eventId}`);
 }
+
+export type InvitationStatus = "PENDING" | "ACCEPTED" | "REVOKED";
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: MemberRole;
+  status: InvitationStatus;
+  isExpired: boolean;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvitationActionResult {
+  invitation: Invitation;
+  /** False when no email provider is configured (or the send itself failed) — the invitation was still created/refreshed; `devInviteUrl` lets local dev proceed without a real inbox. */
+  emailSent: boolean;
+  devInviteUrl?: string;
+}
+
+/** Mirrors createInvitationBodySchema — works for an email with no account yet, unlike addMember() above. */
+export function createInvitation(
+  weddingId: string,
+  body: { email: string; role: MemberRole },
+): Promise<InvitationActionResult> {
+  return apiFetch(`/weddings/${weddingId}/invitations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function listInvitations(
+  weddingId: string,
+  limit = 100,
+): Promise<{ items: Invitation[]; pagination: Pagination }> {
+  return apiFetch(`/weddings/${weddingId}/invitations?limit=${limit}`);
+}
+
+export function revokeInvitation(weddingId: string, invitationId: string): Promise<undefined> {
+  return apiFetch(`/weddings/${weddingId}/invitations/${invitationId}`, { method: "DELETE" });
+}
+
+export function resendInvitation(
+  weddingId: string,
+  invitationId: string,
+): Promise<InvitationActionResult> {
+  return apiFetch(`/weddings/${weddingId}/invitations/${invitationId}/resend`, { method: "POST" });
+}
+
+export interface InvitationPreview {
+  email: string;
+  role: MemberRole;
+  status: InvitationStatus;
+  isExpired: boolean;
+  weddingId: string;
+  weddingName: string;
+  couple: { partnerOneName: string; partnerTwoName: string };
+  invitedByName: string;
+}
+
+/**
+ * Public — no auth required, the same way /reset-password works from a
+ * token alone. POST with the token in the body (not a GET with it in the
+ * URL) so it never ends up written to the backend's access logs.
+ */
+export function previewInvitation(token: string): Promise<{ invitation: InvitationPreview }> {
+  return apiFetch("/invitations/preview", { method: "POST", body: JSON.stringify({ token }) });
+}
+
+/** Requires auth — the caller must already be signed in with the exact email the invitation was addressed to. */
+export function acceptInvitation(token: string): Promise<{ wedding: Wedding; role: MemberRole }> {
+  return apiFetch("/invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
+}

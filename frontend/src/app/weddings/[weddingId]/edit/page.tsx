@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { TextField } from "@/components/auth/TextField";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { RetryNotice } from "@/components/layout/RetryNotice";
 import { WeddingSidebar } from "@/components/layout/WeddingSidebar";
 import { Icon } from "@/components/marketing/Icon";
+import { Modal } from "@/components/ui/Modal";
 import { VenueAddressField, type VenueLocation } from "@/components/wedding/VenueAddressField";
 import {
   ApiError,
@@ -101,80 +102,37 @@ function DiscardChangesModal({
   onContinueEditing: () => void;
   onDiscard: () => void;
 }) {
-  const continueButtonRef = useRef<HTMLButtonElement>(null);
-  const discardButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    continueButtonRef.current?.focus();
-
-    // Only two focusable elements, both known up front, so a trap just has
-    // to cycle Tab/Shift+Tab between them instead of walking the DOM for
-    // every focusable descendant — this is the app's first modal, so there's
-    // no existing focus-trap utility to reuse.
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        onContinueEditing();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const first = continueButtonRef.current;
-      const last = discardButtonRef.current;
-      if (!first || !last) return;
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onContinueEditing]);
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="discard-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-inverse-surface/40 p-space-md backdrop-blur-sm"
-    >
-      <div className="w-full max-w-lg rounded-xl bg-surface-container-lowest p-space-lg shadow-2xl">
-        <div className="mb-space-sm flex items-center gap-space-sm">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-fixed text-on-secondary-fixed">
-            <Icon name="warning" className="text-[22px]" />
-          </div>
-          <h2
-            id="discard-modal-title"
-            className="font-headline-sm text-headline-sm text-on-surface"
-          >
-            Discard changes?
-          </h2>
+    <Modal titleId="discard-modal-title" onClose={onContinueEditing}>
+      <div className="mb-space-sm flex items-center gap-space-sm">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-fixed text-on-secondary-fixed">
+          <Icon name="warning" className="text-[22px]" />
         </div>
-        <p className="font-body-md text-body-md mb-space-lg text-on-surface-variant">
-          You have unsaved changes to this wedding&apos;s details. If you leave now, those changes
-          will be lost.
-        </p>
-        <div className="flex items-center justify-end gap-space-sm">
-          <button
-            ref={continueButtonRef}
-            type="button"
-            onClick={onContinueEditing}
-            className="rounded-lg bg-surface-container px-space-md py-2.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
-          >
-            Continue Editing
-          </button>
-          <button
-            ref={discardButtonRef}
-            type="button"
-            onClick={onDiscard}
-            className="rounded-lg bg-primary px-space-md py-2.5 font-label-md text-label-md text-on-primary shadow-sm transition-colors hover:bg-primary-container"
-          >
-            Discard Changes
-          </button>
-        </div>
+        <h2 id="discard-modal-title" className="font-headline-sm text-headline-sm text-on-surface">
+          Discard changes?
+        </h2>
       </div>
-    </div>
+      <p className="font-body-md text-body-md mb-space-lg text-on-surface-variant">
+        You have unsaved changes to this wedding&apos;s details. If you leave now, those changes
+        will be lost.
+      </p>
+      <div className="flex items-center justify-end gap-space-sm">
+        <button
+          type="button"
+          onClick={onContinueEditing}
+          className="rounded-lg bg-surface-container px-space-md py-2.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
+        >
+          Continue Editing
+        </button>
+        <button
+          type="button"
+          onClick={onDiscard}
+          className="rounded-lg bg-primary px-space-md py-2.5 font-label-md text-label-md text-on-primary shadow-sm transition-colors hover:bg-primary-container"
+        >
+          Discard Changes
+        </button>
+      </div>
+    </Modal>
   );
 }
 

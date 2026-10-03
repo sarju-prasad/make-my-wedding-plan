@@ -48,6 +48,13 @@ export const RATE_LIMIT_POLICIES = {
   'guest:validate': { points: 20, duration: 60, blockDuration: 300 },
   'photo:upload-urls': { points: 30, duration: 60, blockDuration: 120 },
   'email:send': { points: 20, duration: 60, blockDuration: 300 },
+  // Generous enough for an Admin genuinely bulk-inviting family/vendors in
+  // one sitting, but still a real ceiling — each call sends a real email
+  // through Resend, and unlike the auth routes above, the target address is
+  // someone else entirely, so an uncapped version becomes a tool for
+  // spamming arbitrary inboxes from this app's sending domain.
+  'invitation:create': { points: 10, duration: 60, blockDuration: 300 },
+  'invitation:resend': { points: 10, duration: 60, blockDuration: 300 },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyName = keyof typeof RATE_LIMIT_POLICIES;

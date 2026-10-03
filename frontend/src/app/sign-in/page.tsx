@@ -1,15 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type FormEvent, Suspense, useState } from "react";
 
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { TextField } from "@/components/auth/TextField";
 import { loginUser, toErrorMessage } from "@/lib/api";
+import { isSafeRedirect } from "@/lib/safe-redirect";
 
-export default function SignInPage() {
+function SignInForm() {
   const router = useRouter();
+  // e.g. ?next=/invitations/<token>, set by the Accept Invitation page so a
+  // visitor who isn't signed in yet lands back there after authenticating,
+  // instead of the default /weddings. Falls back to /weddings when absent —
+  // or when present but not a same-origin relative path, since this is
+  // attacker-controlled (a crafted ?next=https://evil.example link) and
+  // would otherwise be an open redirect straight after login.
+  const rawNext = useSearchParams().get("next");
+  const next = isSafeRedirect(rawNext) ? rawNext : "/weddings";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +30,7 @@ export default function SignInPage() {
     setSubmitting(true);
     try {
       await loginUser({ email, password });
-      router.push("/weddings");
+      router.push(next);
     } catch (err) {
       // api_design.docx §5.3: login already returns a generic message on
       // the backend (no account enumeration) — shown to the user as-is.
@@ -29,6 +38,9 @@ export default function SignInPage() {
       setSubmitting(false);
     }
   }
+
+  const signUpHref =
+    next === "/weddings" ? "/sign-up" : `/sign-up?next=${encodeURIComponent(next)}`;
 
   return (
     <AuthLayout title="Sign in" subtitle="Welcome back to your wedding workspace.">
@@ -72,10 +84,18 @@ export default function SignInPage() {
 
       <p className="mt-space-lg text-center font-body-sm text-body-sm text-on-surface-variant">
         New here?{" "}
-        <Link href="/sign-up" className="font-semibold text-primary hover:underline">
+        <Link href={signUpHref} className="font-semibold text-primary hover:underline">
           Create an account
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInForm />
+    </Suspense>
   );
 }

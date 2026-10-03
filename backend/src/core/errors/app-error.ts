@@ -85,6 +85,13 @@ export class AppError extends Error {
     return new AppError({ code: ErrorCode.EMAIL_ALREADY_EXISTS, httpStatus: 409, message });
   }
 
+  /** 403 — the authenticated caller's own email doesn't match who an invitation was addressed to. Not FORBIDDEN's generic "no permission" code: the caller is a real, valid account, just the wrong one for this specific invitation. */
+  static emailMismatch(
+    message = 'This invitation was sent to a different email address.',
+  ): AppError {
+    return new AppError({ code: ErrorCode.EMAIL_MISMATCH, httpStatus: 403, message });
+  }
+
   static rateLimited(message = 'Too many requests. Please try again later.'): AppError {
     return new AppError({ code: ErrorCode.RATE_LIMITED, httpStatus: 429, message });
   }

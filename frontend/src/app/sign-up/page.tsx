@@ -1,15 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type FormEvent, Suspense, useState } from "react";
 
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { TextField } from "@/components/auth/TextField";
 import { registerUser, toErrorMessage } from "@/lib/api";
+import { isSafeRedirect } from "@/lib/safe-redirect";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  // See sign-in/page.tsx for why — same ?next= convention, same fallback,
+  // same open-redirect guard.
+  const rawNext = useSearchParams().get("next");
+  const next = isSafeRedirect(rawNext) ? rawNext : "/weddings";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,12 +27,15 @@ export default function SignUpPage() {
     setSubmitting(true);
     try {
       await registerUser({ name, email, password });
-      router.push("/weddings");
+      router.push(next);
     } catch (err) {
       setError(toErrorMessage(err));
       setSubmitting(false);
     }
   }
+
+  const signInHref =
+    next === "/weddings" ? "/sign-in" : `/sign-in?next=${encodeURIComponent(next)}`;
 
   return (
     <AuthLayout title="Plan your wedding" subtitle="Create your private workspace.">
@@ -73,10 +81,18 @@ export default function SignUpPage() {
 
       <p className="mt-space-lg text-center font-body-sm text-body-sm text-on-surface-variant">
         Already have an account?{" "}
-        <Link href="/sign-in" className="font-semibold text-primary hover:underline">
+        <Link href={signInHref} className="font-semibold text-primary hover:underline">
           Sign in
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignUpForm />
+    </Suspense>
   );
 }

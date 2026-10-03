@@ -7,6 +7,11 @@
  * member.
  * Members: full invite/list/update-role/remove — the first real call site
  * for middleware/authorize.ts (backend/CLAUDE.md flagged this as unwired).
+ * Invitations: closes open decision G1 — ADMIN-only create/list/revoke/
+ * resend are wedding-scoped like Members; the preview/accept pair is
+ * token-scoped instead (no :weddingId in the URL, since the token itself
+ * determines the wedding), and accept is the only one requiring auth
+ * without loadMembership — there's no membership yet to load.
  */
 import { Router } from 'express';
 
@@ -14,8 +19,22 @@ import { paginationQuerySchema } from '#core/http/pagination.js';
 import { authenticate } from '#middleware/authenticate.js';
 import { authorize } from '#middleware/authorize.js';
 import { loadMembership } from '#middleware/load-membership.js';
+import { rateLimit } from '#middleware/rate-limit.js';
 import { validate } from '#middleware/validate.js';
 
+import {
+  deleteInvitation,
+  getInvitations,
+  postAcceptInvitation,
+  postInvitation,
+  postInvitationPreview,
+  postResendInvitation,
+} from './invitations.controller.js';
+import {
+  createInvitationBodySchema,
+  invitationIdParamsSchema,
+  invitationTokenBodySchema,
+} from './invitations.validation.js';
 import { deleteMember, getMembers, patchMember, postMember } from './members.controller.js';
 import {
   addMemberBodySchema,
@@ -100,4 +119,63 @@ weddingsRouter.delete(
   loadMembership,
   authorize('ADMIN'),
   deleteMember,
+);
+
+weddingsRouter.post(
+  '/weddings/:weddingId/invitations',
+  authenticate,
+  rateLimit('invitation:create'),
+  validate({ params: weddingIdParamsSchema, body: createInvitationBodySchema }),
+  loadMembership,
+  authorize('ADMIN'),
+  postInvitation,
+);
+
+weddingsRouter.get(
+  '/weddings/:weddingId/invitations',
+  authenticate,
+  validate({ params: weddingIdParamsSchema, query: paginationQuerySchema }),
+  loadMembership,
+  authorize('ADMIN'),
+  getInvitations,
+);
+
+weddingsRouter.delete(
+  '/weddings/:weddingId/invitations/:invitationId',
+  authenticate,
+  validate({ params: invitationIdParamsSchema }),
+  loadMembership,
+  authorize('ADMIN'),
+  deleteInvitation,
+);
+
+weddingsRouter.post(
+  '/weddings/:weddingId/invitations/:invitationId/resend',
+  authenticate,
+  rateLimit('invitation:resend'),
+  validate({ params: invitationIdParamsSchema }),
+  loadMembership,
+  authorize('ADMIN'),
+  postResendInvitation,
+);
+
+// Public/token-based — not wedding-scoped in the URL (the token itself
+// determines the wedding), same shape as /auth/reset-password. POST with
+// the token in the body rather than GET with it in the URL path, same
+// reason /auth/reset-password does: a token in the URL path is written
+// verbatim to the access logs (http-logger.ts logs req.url, and the
+// redaction formatter only scrubs object keys, not substrings inside a URL
+// string), a token in the body isn't. No loadMembership on either: the
+// whole point is that no membership exists yet.
+weddingsRouter.post(
+  '/invitations/preview',
+  validate({ body: invitationTokenBodySchema }),
+  postInvitationPreview,
+);
+
+weddingsRouter.post(
+  '/invitations/accept',
+  authenticate,
+  validate({ body: invitationTokenBodySchema }),
+  postAcceptInvitation,
 );

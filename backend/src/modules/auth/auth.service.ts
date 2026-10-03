@@ -172,6 +172,20 @@ export async function findUserByEmail(email: string): Promise<PublicUserSummary 
   return { id: String(user._id), name: user.name, email: user.email };
 }
 
+/**
+ * Same public-entry-point reasoning as findUserByEmail() above, keyed by id
+ * instead — modules/weddings/invitations.service.ts needs the inviter's
+ * display name for an invitation-preview/email, which is informational
+ * (null just degrades to a generic "A wedding Admin" fallback there), not an
+ * authorization check — so this returns null for a missing/SUSPENDED user
+ * rather than throwing the way getCurrentUser() does for an active session.
+ */
+export async function findUserById(userId: string): Promise<PublicUserSummary | null> {
+  const user = await User.findById(userId);
+  if (user?.status !== 'ACTIVE') return null;
+  return { id: String(user._id), name: user.name, email: user.email };
+}
+
 export interface RequestPasswordResetResult {
   /**
    * Only ever populated outside production, and only when no email

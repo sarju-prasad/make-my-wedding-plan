@@ -2,12 +2,17 @@
 
 import { useEffect, useState } from "react";
 
+import { InviteMemberModal } from "@/components/wedding/InviteMemberModal";
 import {
-  addMember,
+  listInvitations,
   listMembers,
   removeMember,
+  resendInvitation,
+  revokeInvitation,
   toErrorMessage,
   updateMemberRole,
+  type Invitation,
+  type InvitationActionResult,
   type Member,
   type MemberRole,
 } from "@/lib/api";
@@ -30,8 +35,18 @@ function RoleBadge({ role }: { role: MemberRole }) {
   );
 }
 
-/** ADMIN-only remove control — a click-to-confirm toggle rather than a browser confirm() dialog. */
-function RemoveMemberButton({ pending, onConfirm }: { pending: boolean; onConfirm: () => void }) {
+/** Click-to-confirm toggle, not a browser confirm() dialog — same pattern for every destructive row action in this section (remove a member, revoke an invitation). */
+function ConfirmButton({
+  label,
+  confirmLabel,
+  pending,
+  onConfirm,
+}: {
+  label: string;
+  confirmLabel: string;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
   const [confirming, setConfirming] = useState(false);
 
   if (confirming) {
@@ -43,7 +58,7 @@ function RemoveMemberButton({ pending, onConfirm }: { pending: boolean; onConfir
           disabled={pending}
           className="font-label-sm text-label-sm rounded-lg bg-error px-2 py-1 font-semibold text-on-error disabled:opacity-60"
         >
-          Confirm
+          {confirmLabel}
         </button>
         <button
           type="button"
@@ -64,9 +79,17 @@ function RemoveMemberButton({ pending, onConfirm }: { pending: boolean; onConfir
       disabled={pending}
       className="font-label-sm text-label-sm rounded-lg px-2 py-1 text-error hover:bg-error-container/40 disabled:opacity-60"
     >
-      Remove
+      {label}
     </button>
   );
+}
+
+function expiryLabel(invitation: Invitation): string {
+  if (invitation.isExpired) return "Expired";
+  const days = Math.ceil((new Date(invitation.expiresAt).getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return "Expires today";
+  if (days === 1) return "1 day left";
+  return `${days} days left`;
 }
 
 export function MembersSection({
@@ -80,17 +103,20 @@ export function MembersSection({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadCount, setReloadCount] = useState(0);
 
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<MemberRole>("MANAGER");
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviting, setInviting] = useState(false);
+  const [invitations, setInvitations] = useState<Invitation[] | null>(null);
+  const [invitationsError, setInvitationsError] = useState<string | null>(null);
+
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
 
   const [rowError, setRowError] = useState<string | null>(null);
   // A set, not a single id: each row's pending/disabled state must be
   // independent, otherwise finishing one row's request clears the pending
   // flag for a *different* row whose request is still in flight, letting a
-  // second click fire against it before the first one has settled.
-  const [pendingMemberIds, setPendingMemberIds] = useState<ReadonlySet<string>>(new Set());
+  // second click fire against it before the first one has settled. Shared
+  // between member rows and invitation rows — their ids never collide
+  // (different collections), and both need exactly the same guarantee.
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -113,40 +139,89 @@ export function MembersSection({
 
   const isAdmin = members?.some((m) => m.userId === currentUserId && m.role === "ADMIN") ?? false;
 
-  async function handleInvite(event: React.FormEvent) {
-    event.preventDefault();
-    setInviteError(null);
-    setInviting(true);
+  // Pending invitations are ADMIN-only (backend-enforced too) — only fetched
+  // once we actually know the viewer is an Admin, not merely once members
+  // has loaded, since every non-Admin falls through this check forever.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+
+    async function load() {
+      setInvitationsError(null);
+      try {
+        const { items } = await listInvitations(weddingId);
+        if (!cancelled) setInvitations(items);
+      } catch (err) {
+        if (!cancelled) setInvitationsError(toErrorMessage(err));
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [weddingId, isAdmin, reloadCount]);
+
+  function handleInvited(result: InvitationActionResult) {
+    setShowInviteModal(false);
+    setInvitations((prev) => [result.invitation, ...(prev ?? [])]);
+    setInviteNotice(
+      result.emailSent
+        ? `Invitation sent to ${result.invitation.email}.`
+        : `Invitation created for ${result.invitation.email}, but the email couldn't be sent — use Resend to try again.`,
+    );
+  }
+
+  async function handleResend(invitationId: string) {
+    setInvitationsError(null);
+    setPendingIds((prev) => new Set(prev).add(invitationId));
     try {
-      const { member } = await addMember(weddingId, {
-        email: inviteEmail.trim(),
-        role: inviteRole,
-      });
-      // The POST response already has the full member record — no need to
-      // refetch the whole list just to learn data already in hand. (A
-      // reactivated previously-removed member would already be in
-      // `members` as REMOVED-and-hidden — since the list only ever holds
-      // ACTIVE members, filtering it out first avoids a duplicate row.)
-      setMembers((prev) => [...(prev ?? []).filter((m) => m.id !== member.id), member]);
-      setInviteEmail("");
-      setInviteRole("MANAGER");
+      const result = await resendInvitation(weddingId, invitationId);
+      setInvitations(
+        (prev) => prev?.map((i) => (i.id === invitationId ? result.invitation : i)) ?? null,
+      );
+      setInviteNotice(
+        result.emailSent
+          ? `Invitation resent to ${result.invitation.email}.`
+          : `Invitation refreshed for ${result.invitation.email}, but the email couldn't be sent.`,
+      );
     } catch (err) {
-      setInviteError(toErrorMessage(err));
+      setInvitationsError(toErrorMessage(err));
     } finally {
-      setInviting(false);
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(invitationId);
+        return next;
+      });
+    }
+  }
+
+  async function handleRevoke(invitationId: string) {
+    setInvitationsError(null);
+    setPendingIds((prev) => new Set(prev).add(invitationId));
+    try {
+      await revokeInvitation(weddingId, invitationId);
+      setInvitations((prev) => prev?.filter((i) => i.id !== invitationId) ?? null);
+    } catch (err) {
+      setInvitationsError(toErrorMessage(err));
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(invitationId);
+        return next;
+      });
     }
   }
 
   async function handleRoleChange(memberId: string, role: MemberRole) {
     setRowError(null);
-    setPendingMemberIds((prev) => new Set(prev).add(memberId));
+    setPendingIds((prev) => new Set(prev).add(memberId));
     try {
       const { member } = await updateMemberRole(weddingId, memberId, role);
       setMembers((prev) => prev?.map((m) => (m.id === memberId ? member : m)) ?? null);
     } catch (err) {
       setRowError(toErrorMessage(err));
     } finally {
-      setPendingMemberIds((prev) => {
+      setPendingIds((prev) => {
         const next = new Set(prev);
         next.delete(memberId);
         return next;
@@ -156,32 +231,42 @@ export function MembersSection({
 
   async function handleRemove(memberId: string) {
     setRowError(null);
-    setPendingMemberIds((prev) => new Set(prev).add(memberId));
+    setPendingIds((prev) => new Set(prev).add(memberId));
     try {
       await removeMember(weddingId, memberId);
       setMembers((prev) => prev?.filter((m) => m.id !== memberId) ?? null);
     } catch (err) {
       setRowError(toErrorMessage(err));
-      setPendingMemberIds((prev) => {
+      setPendingIds((prev) => {
         const next = new Set(prev);
         next.delete(memberId);
         return next;
       });
     }
-    // No `finally` clearing pendingMemberIds on success: the member is
-    // gone from `members` (so its row unmounts) rather than staying
-    // rendered-but-re-enabled.
+    // No `finally` clearing pendingIds on success: the member is gone from
+    // `members` (so its row unmounts) rather than staying rendered-but-
+    // re-enabled.
   }
 
   return (
     <section className="rounded-xl bg-surface-container-lowest p-space-lg shadow-sm">
-      <div className="mb-space-md flex items-center justify-between">
+      <div className="mb-space-md flex flex-wrap items-center justify-between gap-space-sm">
         <div>
           <h2 className="font-headline-sm text-headline-sm text-on-surface">Wedding team</h2>
           <p className="font-body-sm text-body-sm text-on-surface-variant">
             Family members with access to this wedding.
           </p>
         </div>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setShowInviteModal(true)}
+            className="font-label-sm text-label-sm inline-flex items-center gap-1 rounded-lg bg-primary-container px-space-md py-1.5 text-on-primary shadow-sm transition-all hover:bg-primary"
+          >
+            <span className="material-symbols-outlined text-[16px]">person_add</span>
+            <span>Invite Team Member</span>
+          </button>
+        )}
       </div>
 
       {loadError && (
@@ -206,6 +291,12 @@ export function MembersSection({
         <p className="font-body-sm text-body-sm text-on-surface-variant">Loading team…</p>
       )}
 
+      {inviteNotice && (
+        <p className="font-body-sm text-body-sm mb-space-sm text-primary" role="status">
+          {inviteNotice}
+        </p>
+      )}
+
       {members && (
         <div className="flex flex-col gap-space-sm">
           {rowError && (
@@ -215,7 +306,7 @@ export function MembersSection({
           )}
           {members.map((member) => {
             const isSelf = member.userId === currentUserId;
-            const isPending = pendingMemberIds.has(member.id);
+            const isPending = pendingIds.has(member.id);
             return (
               <div
                 key={member.id}
@@ -262,7 +353,9 @@ export function MembersSection({
                         —
                       </span>
                     ) : (
-                      <RemoveMemberButton
+                      <ConfirmButton
+                        label="Remove"
+                        confirmLabel="Confirm"
                         pending={isPending}
                         onConfirm={() => void handleRemove(member.id)}
                       />
@@ -278,50 +371,77 @@ export function MembersSection({
       )}
 
       {isAdmin && (
-        <form
-          onSubmit={(e) => void handleInvite(e)}
-          className="mt-space-md flex flex-wrap items-end gap-space-sm border-t border-surface-container-high pt-space-md"
-        >
-          <div className="flex flex-1 flex-col gap-1 [flex-basis:12rem]">
-            <label htmlFor="inviteEmail" className="font-label-sm text-label-sm text-on-surface">
-              Add a family member
-            </label>
-            <input
-              id="inviteEmail"
-              type="email"
-              required
-              disabled={inviting}
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="Their email address"
-              className="font-body-sm text-body-sm w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-space-sm py-1.5 text-on-surface disabled:opacity-60 focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
-            />
-          </div>
-          <select
-            value={inviteRole}
-            disabled={inviting}
-            onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-            className="font-label-sm text-label-sm rounded-lg border border-outline-variant bg-surface-container-lowest px-2 py-1.5 text-on-surface disabled:opacity-60"
-          >
-            <option value="MANAGER">Manager</option>
-            <option value="ADMIN">Admin</option>
-          </select>
-          <button
-            type="submit"
-            disabled={inviting}
-            className="font-label-sm text-label-sm rounded-lg bg-primary px-space-md py-1.5 font-semibold text-on-primary transition-all hover:bg-primary-container disabled:opacity-60"
-          >
-            {inviting ? "Adding…" : "Add"}
-          </button>
-          {inviteError && (
-            <p className="font-body-sm text-body-sm w-full text-error" role="alert">
-              {inviteError}
+        <div className="mt-space-lg border-t border-surface-container-high pt-space-md">
+          <h3 className="font-label-lg text-label-lg mb-space-sm text-on-surface">
+            Pending invitations
+          </h3>
+
+          {invitationsError && (
+            <p className="font-body-sm text-body-sm mb-space-sm text-error" role="alert">
+              {invitationsError}
             </p>
           )}
-          <p className="font-body-sm text-body-sm w-full text-on-surface-variant">
-            They need an existing account on Make My Wedding Plan.
-          </p>
-        </form>
+
+          {!invitationsError && !invitations && (
+            <p className="font-body-sm text-body-sm text-on-surface-variant">Loading…</p>
+          )}
+
+          {invitations && invitations.length === 0 && (
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              No pending invitations.
+            </p>
+          )}
+
+          {invitations && invitations.length > 0 && (
+            <div className="flex flex-col gap-space-sm">
+              {invitations.map((invitation) => {
+                const isPending = pendingIds.has(invitation.id);
+                return (
+                  <div
+                    key={invitation.id}
+                    className="flex flex-wrap items-center justify-between gap-space-sm rounded-lg bg-surface-container-low p-space-sm"
+                  >
+                    <div className="flex min-w-0 flex-col">
+                      <span className="font-body-md text-body-md truncate font-medium text-on-surface">
+                        {invitation.email}
+                      </span>
+                      <span className="font-body-sm text-body-sm text-on-surface-variant">
+                        Invited as <RoleBadge role={invitation.role} /> ·{" "}
+                        <span className={invitation.isExpired ? "text-error" : undefined}>
+                          {expiryLabel(invitation)}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-space-sm">
+                      <button
+                        type="button"
+                        onClick={() => void handleResend(invitation.id)}
+                        disabled={isPending}
+                        className="font-label-sm text-label-sm rounded-lg bg-surface-container px-2 py-1 text-on-surface transition-all hover:bg-surface-container-high disabled:opacity-60"
+                      >
+                        Resend
+                      </button>
+                      <ConfirmButton
+                        label="Revoke"
+                        confirmLabel="Confirm"
+                        pending={isPending}
+                        onConfirm={() => void handleRevoke(invitation.id)}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showInviteModal && (
+        <InviteMemberModal
+          weddingId={weddingId}
+          onClose={() => setShowInviteModal(false)}
+          onInvited={handleInvited}
+        />
       )}
     </section>
   );
