@@ -5,9 +5,11 @@ export { corsMiddleware } from './cors.js';
 export { originCheck } from './origin-check.js';
 export { validate, type ValidationSchemas } from './validate.js';
 export { notFound } from './not-found.js';
+export { ensureDbConnected } from './ensure-db-connected.js';
 export { errorHandler } from './error-handler.js';
 export {
   rateLimit,
+  emailKey,
   RATE_LIMIT_POLICIES,
   type RateLimitPolicy,
   type RateLimitPolicyName,

@@ -97,6 +97,7 @@ weddingsRouter.get(
 weddingsRouter.post(
   '/weddings/:weddingId/members',
   authenticate,
+  rateLimit('member:add'),
   validate({ params: weddingIdParamsSchema, body: addMemberBodySchema }),
   loadMembership,
   authorize('ADMIN'),

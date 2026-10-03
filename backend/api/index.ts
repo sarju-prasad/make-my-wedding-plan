@@ -7,8 +7,9 @@
  * start must be able to serve /api/v1/healthz even if the database is
  * unreachable (see modules/health/health.service.ts). The database connects
  * lazily, the first time a request actually needs it — /readyz drives that
- * for itself; other routes will call connectDb() from their own service
- * layer as they're built.
+ * for itself; every other route is gated on it by
+ * middleware/ensure-db-connected.ts (routes/v1.ts), mounted right after
+ * healthRouter.
  *
  * vercel.json routes every request here via a catch-all rewrite.
  */

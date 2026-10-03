@@ -12,6 +12,7 @@
  */
 import { Router } from 'express';
 
+import { ensureDbConnected } from '../middleware/ensure-db-connected.js';
 import { authRouter } from '../modules/auth/auth.routes.js';
 import '../modules/auth/auth.openapi.js';
 import { eventsRouter } from '../modules/events/events.routes.js';
@@ -24,6 +25,9 @@ import '../modules/weddings/weddings.openapi.js';
 export const v1Router: Router = Router();
 
 v1Router.use(healthRouter);
+// Everything past this point needs the database — healthRouter's /healthz
+// deliberately stays reachable without it (see ensure-db-connected.ts).
+v1Router.use(ensureDbConnected);
 v1Router.use(authRouter);
 v1Router.use(weddingsRouter);
 v1Router.use(eventsRouter);

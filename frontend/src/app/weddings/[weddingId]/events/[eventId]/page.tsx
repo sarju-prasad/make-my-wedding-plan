@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AppHeader } from "@/components/layout/AppHeader";
@@ -28,6 +28,7 @@ import {
 
 export default function EventDetailsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ weddingId: string; eventId: string }>();
   const weddingId = params.weddingId;
   const eventId = params.eventId;
@@ -59,7 +60,7 @@ export default function EventDetailsPage() {
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
-          router.replace("/sign-in");
+          router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
           return;
         }
         setLoadError(toErrorMessage(err));
@@ -72,7 +73,7 @@ export default function EventDetailsPage() {
     return () => {
       cancelled = true;
     };
-  }, [router, weddingId, eventId, reloadCount]);
+  }, [router, pathname, weddingId, eventId, reloadCount]);
 
   const weddingContext = wedding
     ? `${wedding.couple.partnerOneName} & ${wedding.couple.partnerTwoName}`

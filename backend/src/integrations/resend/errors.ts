@@ -23,7 +23,18 @@ const RATE_LIMITED_ERROR_NAMES = new Set([
   'monthly_quota_exceeded',
 ]);
 
-/** For the `{ data: null, error }` result shape — the documented, common case. */
+/**
+ * For the `{ data: null, error }` result shape — the documented, common
+ * case. The client-facing `message` never includes Resend's own
+ * `error.message` — both current call sites (invitations.service.ts,
+ * auth.service.ts) already catch and swallow this (email sending is
+ * best-effort there), so nothing leaks today, but a raw provider error
+ * message is exactly the kind of internal detail error-mappers.ts's own
+ * Mongo-connectivity handling already keeps generic for the same reason.
+ * The real detail is preserved via `cause`, which pino logs in full
+ * (verified directly) without exposing it to whatever eventually calls
+ * `toAppError()` on this.
+ */
 export function mapResendErrorResponse(error: ResendErrorResponse, context: string): AppError {
   if (RATE_LIMITED_ERROR_NAMES.has(error.name)) {
     return AppError.rateLimited('Email sending limit reached. Please try again later.');
@@ -32,9 +43,10 @@ export function mapResendErrorResponse(error: ResendErrorResponse, context: stri
   return new AppError({
     code: ErrorCode.EMAIL_SEND_FAILED,
     httpStatus: 502,
-    message: `${context} failed: ${error.message}`,
+    message: `${context} failed.`,
     isOperational: true,
     details: { resendErrorCode: error.name },
+    cause: error,
   });
 }
 

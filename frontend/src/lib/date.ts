@@ -3,14 +3,26 @@
  * same page can have different ones — `new Intl.DateTimeFormat(locale)`
  * without a `timeZone` option would silently use the viewer's local zone
  * instead, so every call site must pass the wedding's own `timezone`.
+ *
+ * Falls back to the bare YYYY-MM-DD date for a timezone the viewer's
+ * browser can't construct, rather than throwing — every other helper in
+ * this file already has this same guard (the backend's Node/ICU build and a
+ * given browser's Intl implementation aren't guaranteed to agree on every
+ * zone name); this one didn't, and since it's called directly during render
+ * with no try/catch at the call site, that gap meant an unrecognised
+ * timezone crashed the whole page.
  */
 export function formatWeddingDate(weddingDateIso: string, timezone: string): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: timezone,
-  }).format(new Date(weddingDateIso));
+  try {
+    return new Intl.DateTimeFormat("en-IN", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: timezone,
+    }).format(new Date(weddingDateIso));
+  } catch {
+    return weddingDateIso.slice(0, 10);
+  }
 }
 
 /**

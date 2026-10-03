@@ -37,8 +37,17 @@ async function main(): Promise<void> {
     }, SHUTDOWN_TIMEOUT_MS);
     forceExit.unref();
 
-    server.close(() => {
-      logger.info('HTTP server closed.');
+    // server.close()'s callback only fires once every in-flight request has
+    // finished (it just stops accepting *new* connections immediately) —
+    // awaiting it, rather than firing it and moving on, is the entire point.
+    // Without this, disconnectDb() and process.exit() below ran right away,
+    // pulling the database connection out from under whatever requests were
+    // still being handled and killing the process before they could finish.
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        logger.info('HTTP server closed.');
+        resolve();
+      });
     });
 
     await disconnectDb();

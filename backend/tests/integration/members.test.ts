@@ -1,9 +1,11 @@
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../../src/app.js';
-// Only for the explicit index sync below — every other test in this file
-// goes through the real HTTP API, never this model directly.
+import { WeddingInvitation } from '../../src/modules/weddings/invitations.model.js';
+// Only for the explicit index sync below, and the forced mid-transaction
+// failure further down (same pattern as weddings.test.ts's own atomicity
+// test) — every other test in this file goes through the real HTTP API.
 import { WeddingMember } from '../../src/modules/weddings/members.model.js';
 
 const app = createApp();
@@ -117,6 +119,28 @@ describe('POST /api/v1/weddings/:weddingId/members', () => {
       .get(`/api/v1/weddings/${weddingId}/members`)
       .set('Cookie', admin.cookies);
     expect(listRes.body.data.items).toHaveLength(2);
+  });
+
+  it('rate-limits repeated add-member attempts from the same caller', async () => {
+    const admin = await registerUser();
+    const weddingId = await createWedding(admin.cookies);
+
+    // middleware/rate-limit.ts: RATE_LIMIT_POLICIES['member:add'] = 10 points / 60s.
+    // Looking up a nonexistent email every time is deliberate — the point
+    // being limited is the lookup-and-report oracle itself (USER_NOT_FOUND
+    // vs 201 reveals whether an email is registered), not any one outcome.
+    const attempt = (n: number) =>
+      post(`/api/v1/weddings/${weddingId}/members`)
+        .set('Cookie', admin.cookies)
+        .send({ email: `rate-limit-probe-${n}@example.com`, role: 'MANAGER' });
+
+    for (let i = 0; i < 10; i += 1) {
+      await attempt(i);
+    }
+    const res = await attempt(10);
+
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('RATE_LIMITED');
   });
 
   // security.todo.test.ts's "a MANAGER cannot perform an ADMIN-only
@@ -241,6 +265,26 @@ describe('PATCH /api/v1/weddings/:weddingId/members/:memberId', () => {
     expect(res.body.data.member.role).toBe('ADMIN');
   });
 
+  it("cannot change another wedding's member through this wedding's id", async () => {
+    const adminA = await registerUser();
+    const adminB = await registerUser();
+    const memberOfB = await registerUser();
+    const weddingA = await createWedding(adminA.cookies);
+    const weddingB = await createWedding(adminB.cookies);
+
+    const addRes = await post(`/api/v1/weddings/${weddingB}/members`)
+      .set('Cookie', adminB.cookies)
+      .send({ email: memberOfB.email, role: 'MANAGER' });
+    const memberOfBId = addRes.body.data.member.id as string;
+
+    const res = await patch(`/api/v1/weddings/${weddingA}/members/${memberOfBId}`)
+      .set('Cookie', adminA.cookies)
+      .send({ role: 'ADMIN' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('MEMBER_NOT_FOUND');
+  });
+
   it('a MANAGER cannot change a role (ADMIN-only)', async () => {
     const admin = await registerUser();
     const manager = await registerUser();
@@ -324,6 +368,66 @@ describe('DELETE /api/v1/weddings/:weddingId/members/:memberId', () => {
       .get(`/api/v1/weddings/${weddingId}/members`)
       .set('Cookie', admin.cookies);
     expect(listRes.body.data.items).toHaveLength(1);
+  });
+
+  it('rolls back the member removal itself if revoking their invitations fails mid-transaction', async () => {
+    const admin = await registerUser();
+    const invitee = await registerUser();
+    const weddingId = await createWedding(admin.cookies);
+
+    const addRes = await post(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', admin.cookies)
+      .send({ email: invitee.email, role: 'MANAGER' });
+    const memberId = addRes.body.data.member.id as string;
+
+    const spy = vi
+      .spyOn(WeddingInvitation, 'updateMany')
+      .mockRejectedValueOnce(new Error('simulated invitation-revocation failure'));
+
+    try {
+      const res = await del(`/api/v1/weddings/${weddingId}/members/${memberId}`).set(
+        'Cookie',
+        admin.cookies,
+      );
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The member removal itself must not have stuck — a failure in the
+    // second step of the transaction must roll back the first too.
+    const listRes = await request(app)
+      .get(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', admin.cookies);
+    expect(listRes.body.data.items).toHaveLength(2);
+  });
+
+  it("cannot remove another wedding's member through this wedding's id", async () => {
+    const adminA = await registerUser();
+    const adminB = await registerUser();
+    const memberOfB = await registerUser();
+    const weddingA = await createWedding(adminA.cookies);
+    const weddingB = await createWedding(adminB.cookies);
+
+    const addRes = await post(`/api/v1/weddings/${weddingB}/members`)
+      .set('Cookie', adminB.cookies)
+      .send({ email: memberOfB.email, role: 'MANAGER' });
+    const memberOfBId = addRes.body.data.member.id as string;
+
+    const res = await del(`/api/v1/weddings/${weddingA}/members/${memberOfBId}`).set(
+      'Cookie',
+      adminA.cookies,
+    );
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('MEMBER_NOT_FOUND');
+
+    const stillThere = await request(app)
+      .get(`/api/v1/weddings/${weddingB}/members`)
+      .set('Cookie', adminB.cookies);
+    expect(
+      (stillThere.body.data.items as { email: string }[]).some((m) => m.email === memberOfB.email),
+    ).toBe(true);
   });
 
   it('cannot remove the only active ADMIN', async () => {

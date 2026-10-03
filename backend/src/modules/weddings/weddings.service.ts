@@ -166,12 +166,27 @@ export interface ActiveMembership {
  * their public entry point... deep imports into another module's
  * internals... should stay blocked").
  */
+/**
+ * The single choke point every wedding-scoped route passes through
+ * (middleware/load-membership.ts) — so the archived check belongs here, not
+ * repeated in each module that happens to also call Wedding.findById()
+ * itself. Without it, an archived wedding's members/invitations/events
+ * stay fully readable and writable through every route gated by
+ * loadMembership, even though the dedicated GET /weddings/:weddingId
+ * already correctly 404s via its own .excludeArchived() (getWedding()
+ * below) — there is no archive/restore endpoint yet to actually produce
+ * this state, but this is the one place that must not be missed once one
+ * ships.
+ */
 export async function findActiveMembership(
   userId: string,
   weddingId: string,
 ): Promise<ActiveMembership | null> {
-  const member = await WeddingMember.findOne({ weddingId, userId, status: 'ACTIVE' });
-  if (!member) return null;
+  const [wedding, member] = await Promise.all([
+    Wedding.findById(weddingId).excludeArchived(),
+    WeddingMember.findOne({ weddingId, userId, status: 'ACTIVE' }),
+  ]);
+  if (!wedding || !member) return null;
   return { weddingId: String(member.weddingId), role: member.role };
 }
 

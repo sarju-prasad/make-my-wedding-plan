@@ -100,6 +100,25 @@ describe('POST /api/v1/weddings/:weddingId/events', () => {
     expect(res.body.error.code).toBe('UNAUTHORIZED');
   });
 
+  // Unlike members.routes.ts/invitations.routes.ts, event creation has no
+  // authorize('ADMIN') — PRD §9/§10 give both Admin and Manager the ability
+  // to create/edit events (events.routes.ts's own header comment). This is
+  // the one test actually exercising that as a MANAGER rather than the
+  // wedding's own creator, who is always an ADMIN.
+  it('a MANAGER (not just an ADMIN) can create an event', async () => {
+    const admin = await registerUser();
+    const manager = await registerUser();
+    const weddingId = await createWedding(admin.cookies);
+    await post(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', admin.cookies)
+      .send({ email: manager.email, role: 'MANAGER' });
+
+    const { status, body } = await createEvent(weddingId, manager.cookies);
+
+    expect(status).toBe(201);
+    expect(body.data.event.name).toBe('Haldi');
+  });
+
   // Existing, already-established convention (weddings.test.ts,
   // members.test.ts): a non-member/removed-member gets WEDDING_NOT_FOUND,
   // not FORBIDDEN, so a non-member can't use the response code to probe

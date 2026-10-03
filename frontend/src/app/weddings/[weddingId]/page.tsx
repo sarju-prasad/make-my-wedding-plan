@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AppHeader } from "@/components/layout/AppHeader";
@@ -81,6 +81,7 @@ function OverviewSkeleton() {
 
 export default function WeddingOverviewPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ weddingId: string }>();
   const weddingId = params.weddingId;
 
@@ -94,7 +95,16 @@ export default function WeddingOverviewPage() {
     let cancelled = false;
 
     async function load() {
+      // Re-runs whenever `weddingId` changes (e.g. switching weddings via
+      // WeddingSidebar, which Next.js serves from the same mounted component
+      // instance rather than remounting) — without resetting these first,
+      // the previous wedding's details would stay rendered as if they were
+      // the new one's until the fetch resolves, with no loading state to
+      // show in between. Same fix as edit/page.tsx's own load().
+      setLoading(true);
       setLoadError(null);
+      setWedding(null);
+      setUser(null);
       try {
         const [{ user: currentUser }, { wedding: currentWedding }] = await Promise.all([
           getCurrentUser(),
@@ -110,7 +120,7 @@ export default function WeddingOverviewPage() {
         // error, shows the retry state below instead (see weddings/page.tsx
         // for the same reasoning).
         if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
-          router.replace("/sign-in");
+          router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
           return;
         }
         setLoadError(toErrorMessage(err));
@@ -123,7 +133,7 @@ export default function WeddingOverviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [router, weddingId, reloadCount]);
+  }, [router, pathname, weddingId, reloadCount]);
 
   const weddingContext = wedding
     ? `${wedding.couple.partnerOneName} & ${wedding.couple.partnerTwoName}`

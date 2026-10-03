@@ -1,10 +1,19 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../../src/app.js';
 import { User } from '../../src/modules/auth/auth.model.js';
 
 const app = createApp();
+
+// db/connection.ts disables autoIndex outside development, and tests run
+// with NODE_ENV=test — so without this, users.email's unique index simply
+// doesn't exist here either, and the concurrent-duplicate-registration test
+// below would pass for the wrong reason (no race actually being caught).
+// Same gap, same fix, as tests/integration/{members,invitations}.test.ts.
+beforeAll(async () => {
+  await User.syncIndexes();
+});
 
 // middleware/origin-check.ts rejects state-changing requests with no
 // Origin/Referer matching CORS_ALLOWED_ORIGINS (403) — tests/setup/global-setup.ts
@@ -55,6 +64,28 @@ describe('POST /api/v1/auth/register', () => {
     expect(res.body.error.code).toBe('EMAIL_ALREADY_EXISTS');
   });
 
+  it('rejects one of two concurrent registrations with the same email', async () => {
+    // registerUser() pre-checks User.exists() before inserting, purely as a
+    // fast path — the real guard against two requests racing past that
+    // check is the unique index on users.email, caught via the
+    // isDuplicateKeyError() catch around User.create() (auth.service.ts).
+    // Without that index actually existing (scripts/sync-indexes.ts not
+    // loading any models was exactly this bug), both of these would
+    // succeed and leave two accounts sharing one email.
+    const [first, second] = await Promise.all([
+      post('/api/v1/auth/register').send(VALID_REGISTRATION),
+      post('/api/v1/auth/register').send({ ...VALID_REGISTRATION, name: 'Someone Else' }),
+    ]);
+
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([201, 409]);
+    const loser = first.status === 409 ? first : second;
+    expect(loser.body.error.code).toBe('EMAIL_ALREADY_EXISTS');
+
+    const accounts = await User.find({ email: VALID_REGISTRATION.email });
+    expect(accounts).toHaveLength(1);
+  });
+
   it('rejects a short password with VALIDATION_ERROR', async () => {
     const res = await post('/api/v1/auth/register').send({
       ...VALID_REGISTRATION,
@@ -89,6 +120,22 @@ describe('POST /api/v1/auth/login', () => {
     expect(res.body.data.user.email).toBe(VALID_REGISTRATION.email);
     const cookieHeader = res.headers['set-cookie'] as unknown as string[];
     expect(cookieHeader.some((c) => c.startsWith('access_token='))).toBe(true);
+  });
+
+  it('logs in with a password that has leading/trailing whitespace, unmodified', async () => {
+    // Neither register's nor login's password field trims — if login ever
+    // trimmed while register didn't (or vice versa), this exact password
+    // would hash one way at registration and compare a different way at
+    // login, locking the account out permanently.
+    const spacedPassword = '  correct-horse-battery  ';
+    await post('/api/v1/auth/register').send({ ...VALID_REGISTRATION, password: spacedPassword });
+
+    const res = await post('/api/v1/auth/login').send({
+      email: VALID_REGISTRATION.email,
+      password: spacedPassword,
+    });
+
+    expect(res.status).toBe(200);
   });
 
   // api_design.docx §5.3: "Use a generic invalid-credentials response to
@@ -129,6 +176,27 @@ describe('POST /api/v1/auth/login', () => {
     expect(res.status).toBe(429);
     expect(res.body.error.code).toBe('RATE_LIMITED');
     expect(res.headers['retry-after']).toBeTruthy();
+  });
+
+  it('is rate limited per target email even when each attempt comes from a different IP', async () => {
+    // middleware/rate-limit.ts: RATE_LIMIT_POLICIES['auth:login-per-email'] =
+    // 10 points / 60s. app.ts sets `trust proxy: 1`, so a distinct
+    // X-Forwarded-For per request simulates attempts the per-IP auth:login
+    // limit above would never catch on its own (each IP only sends one) —
+    // this is exactly the distributed-credential-stuffing-against-one-
+    // account case a per-IP-only limit misses.
+    const attempt = (n: number) =>
+      post('/api/v1/auth/login')
+        .set('X-Forwarded-For', `10.0.0.${n}`)
+        .send({ email: 'targeted-victim@example.com', password: 'whatever-password' });
+
+    for (let i = 0; i < 10; i += 1) {
+      await attempt(i);
+    }
+    const res = await attempt(10);
+
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('RATE_LIMITED');
   });
 });
 
@@ -220,6 +288,22 @@ describe('POST /api/v1/auth/forgot-password and /auth/reset-password', () => {
     expect(registered.status).toBe(200);
     expect(unregistered.status).toBe(200);
     expect(registered.body.data.message).toBe(unregistered.body.data.message);
+  });
+
+  it('pads the no-account response up to the same floor as the real one, closing the timing side-channel', async () => {
+    // Without auth.service.ts's withMinimumDuration() wrapper, the
+    // no-account path returns immediately (no DB write, no email-provider
+    // call) while the real-account path pays for both — an attacker could
+    // tell the two apart by response time alone even though the body is
+    // identical. PASSWORD_RESET_MIN_RESPONSE_MS is 500ms; this only checks
+    // the fast path actually gets padded up to it, not an exact match
+    // against the real path (which varies with DB/network latency).
+    const startedAt = Date.now();
+    const res = await post('/api/v1/auth/forgot-password').send({ email: 'nobody@example.com' });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(res.status).toBe(200);
+    expect(elapsedMs).toBeGreaterThanOrEqual(450);
   });
 
   it('includes a devResetUrl for a registered email but not for an unregistered one', async () => {

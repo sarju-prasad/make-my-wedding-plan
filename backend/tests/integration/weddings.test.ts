@@ -7,6 +7,7 @@ import { createApp } from '../../src/app.js';
 // way to force the second write of a two-write transaction to fail without
 // this. Not a pattern to copy for anything other than this one atomicity test.
 import { WeddingMember } from '../../src/modules/weddings/members.model.js';
+import { Wedding } from '../../src/modules/weddings/weddings.model.js';
 
 const app = createApp();
 
@@ -368,6 +369,38 @@ describe('GET /api/v1/weddings/:weddingId — cross-wedding access', () => {
 
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('loadMembership blocks access to an archived wedding', () => {
+  // No archive endpoint exists yet (see CLAUDE.md) — flipping isArchived
+  // directly via the model is the only way to produce this state at all,
+  // same reasoning as this file's other direct-model-write tests.
+  //
+  // GET /weddings/:weddingId itself already excludes archived weddings via
+  // its own getWedding()/.excludeArchived() call, independent of
+  // loadMembership — so this deliberately goes through a *sub-resource*
+  // route instead (GET .../members), which has no archived check of its
+  // own and relies entirely on loadMembership's (weddings.service.ts's
+  // findActiveMembership) for this.
+  it('blocks a sub-resource route (GET .../members) once the wedding is archived', async () => {
+    const owner = await registerUser();
+    const createRes = await post('/api/v1/weddings').set('Cookie', owner).send(VALID_WEDDING);
+    const weddingId = createRes.body.data.wedding.id as string;
+
+    const before = await request(app)
+      .get(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', owner);
+    expect(before.status).toBe(200);
+
+    await Wedding.updateOne({ _id: weddingId }, { isArchived: true, archivedAt: new Date() });
+
+    const after = await request(app)
+      .get(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', owner);
+
+    expect(after.status).toBe(404);
+    expect(after.body.error.code).toBe('WEDDING_NOT_FOUND');
   });
 });
 

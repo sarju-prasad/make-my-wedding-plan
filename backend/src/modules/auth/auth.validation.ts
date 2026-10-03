@@ -33,7 +33,15 @@ export const loginBodySchema = z
     // "invalid credentials" response is required either way (api_design.docx
     // §5.3) — the comparison itself is what should reject a short password,
     // not a schema check that would leak which login field failed.
-    password: nonEmptyTrimmedString,
+    //
+    // Deliberately not nonEmptyTrimmedString either — that trims, and a
+    // password is an opaque string Argon2id compares byte-for-byte, not free
+    // text like a name. registerBodySchema/resetPasswordBodySchema's
+    // passwordSchema below never trimmed; this used to, which meant a
+    // password registered (or reset) with a trailing space could never be
+    // used to log in — login would trim it away before hashing, producing a
+    // value that doesn't match the hash of the untrimmed original.
+    password: z.string().min(1, 'Password is required.'),
   })
   .strict();
 

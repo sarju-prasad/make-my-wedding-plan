@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { TextField } from "@/components/auth/TextField";
@@ -138,6 +138,7 @@ function DiscardChangesModal({
 
 export default function EditWeddingPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ weddingId: string }>();
   const weddingId = params.weddingId;
 
@@ -182,7 +183,7 @@ export default function EditWeddingPage() {
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
-          router.replace("/sign-in");
+          router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
           return;
         }
         setLoadError(toErrorMessage(err));
@@ -195,7 +196,7 @@ export default function EditWeddingPage() {
     return () => {
       cancelled = true;
     };
-  }, [router, weddingId, reloadCount]);
+  }, [router, pathname, weddingId, reloadCount]);
 
   function updateField<K extends keyof EditFormState>(key: K, value: EditFormState[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -264,7 +265,7 @@ export default function EditWeddingPage() {
       router.push(`/weddings/${weddingId}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
-        router.replace("/sign-in");
+        router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
         return;
       }
       const { fieldErrors: fe, message } = mapValidationError(err, FIELD_PATH_MAP);

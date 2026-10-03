@@ -18,13 +18,25 @@ export function Modal({
   onClose,
   children,
   widthClassName = "max-w-lg",
+  closeDisabled = false,
 }: {
   titleId: string;
   onClose: () => void;
   children: ReactNode;
   widthClassName?: string;
+  /** True while a child form is mid-submit — Escape is ignored rather than closing the modal out from under an in-flight request. */
+  closeDisabled?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Read at actual keypress time, same ref-forwarding reasoning as
+  // onCloseRef below — closeDisabled flips from false to true mid-submit,
+  // and the keydown listener (registered once, on mount) must see the
+  // current value, not whatever it was when the modal first opened.
+  const closeDisabledRef = useRef(closeDisabled);
+  useEffect(() => {
+    closeDisabledRef.current = closeDisabled;
+  });
 
   // Every caller passes a fresh inline `onClose` arrow on each of its own
   // renders (e.g. MembersSection re-rendering when its invitations list
@@ -43,18 +55,28 @@ export function Modal({
 
   useEffect(() => {
     const panel = panelRef.current;
-    const focusable = panel
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const initialFocusable = panel
       ? Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
       : [];
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    focusable[0]?.focus();
+    initialFocusable[0]?.focus();
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onCloseRef.current();
+        if (!closeDisabledRef.current) onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab" || focusable.length === 0) return;
+      if (e.key !== "Tab" || !panel) return;
+      // Re-queried on every Tab press, not captured once at mount — a
+      // submit disables inputs/buttons inside the modal (InviteMemberModal's
+      // form fields and buttons all get `disabled={submitting}`), which
+      // removes them from the native tab order. A list captured once still
+      // included those now-disabled elements, so checking
+      // `activeElement === (stale) last` never matched once the real last
+      // tabable element changed — Tab could walk off the end of the modal
+      // entirely instead of wrapping back to the first field.
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusable.length === 0) return;
       const first = focusable[0]!;
       const last = focusable[focusable.length - 1]!;
       if (e.shiftKey && document.activeElement === first) {

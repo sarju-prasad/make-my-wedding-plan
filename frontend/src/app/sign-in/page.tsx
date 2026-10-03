@@ -7,7 +7,7 @@ import { type FormEvent, Suspense, useState } from "react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { TextField } from "@/components/auth/TextField";
 import { loginUser, toErrorMessage } from "@/lib/api";
-import { isSafeRedirect } from "@/lib/safe-redirect";
+import { resolveSafeRedirect } from "@/lib/safe-redirect";
 
 function SignInForm() {
   const router = useRouter();
@@ -17,8 +17,7 @@ function SignInForm() {
   // or when present but not a same-origin relative path, since this is
   // attacker-controlled (a crafted ?next=https://evil.example link) and
   // would otherwise be an open redirect straight after login.
-  const rawNext = useSearchParams().get("next");
-  const next = isSafeRedirect(rawNext) ? rawNext : "/weddings";
+  const next = resolveSafeRedirect(useSearchParams().get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);

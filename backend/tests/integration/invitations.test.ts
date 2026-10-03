@@ -331,6 +331,29 @@ describe('DELETE /api/v1/weddings/:weddingId/invitations/:invitationId', () => {
     expect(res.status).toBe(403);
   });
 
+  it("cannot revoke another wedding's invitation through this wedding's id", async () => {
+    const { cookies: adminA } = await registerUser();
+    const { cookies: adminB } = await registerUser();
+    const weddingA = await createWedding(adminA);
+    const weddingB = await createWedding(adminB);
+    const { invitationId } = await invite(adminB, weddingB, 'invitee-b@example.com');
+
+    const res = await del(`/api/v1/weddings/${weddingA}/invitations/${invitationId}`).set(
+      'Cookie',
+      adminA,
+    );
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('INVITATION_NOT_FOUND');
+
+    const stillPending = await request(app)
+      .get(`/api/v1/weddings/${weddingB}/invitations`)
+      .set('Cookie', adminB);
+    expect((stillPending.body.data.items as { email: string }[]).map((i) => i.email)).toContain(
+      'invitee-b@example.com',
+    );
+  });
+
   it('revokes a pending invitation', async () => {
     const { cookies: admin } = await registerUser();
     const weddingId = await createWedding(admin);
@@ -392,6 +415,22 @@ describe('POST /api/v1/weddings/:weddingId/invitations/:invitationId/resend', ()
     );
 
     expect(res.status).toBe(403);
+  });
+
+  it("cannot resend another wedding's invitation through this wedding's id", async () => {
+    const { cookies: adminA } = await registerUser();
+    const { cookies: adminB } = await registerUser();
+    const weddingA = await createWedding(adminA);
+    const weddingB = await createWedding(adminB);
+    const { invitationId } = await invite(adminB, weddingB, 'invitee-b@example.com');
+
+    const res = await post(`/api/v1/weddings/${weddingA}/invitations/${invitationId}/resend`).set(
+      'Cookie',
+      adminA,
+    );
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('INVITATION_NOT_FOUND');
   });
 
   it('issues a new token, invalidating the old one', async () => {
@@ -728,5 +767,117 @@ describe('POST /api/v1/invitations/accept', () => {
       expect(acceptRes.body.error.code).toBe('ALREADY_MEMBER');
       expect(addRes.status).toBe(201);
     }
+  });
+
+  it('a concurrent resend racing an accept on the old token resolves cleanly either way, never both', async () => {
+    const { cookies: admin } = await registerUser();
+    const weddingId = await createWedding(admin);
+    const { cookies: invitee, email: inviteeEmail } = await registerUser();
+    const { invitationId, token: oldToken } = await invite(admin, weddingId, inviteeEmail);
+
+    // resendInvitation() overwrites tokenHash on the same document rather
+    // than creating a new one — a request already holding the old token
+    // that read the invitation just before the resend's write must not
+    // still be able to accept with it afterwards (invitations.service.ts's
+    // acceptInvitation() conditions its update on tokenHash, not just
+    // status, specifically for this).
+    const [acceptRes, resendRes] = await Promise.all([
+      acceptInvite(oldToken).set('Cookie', invitee),
+      post(`/api/v1/weddings/${weddingId}/invitations/${invitationId}/resend`).set('Cookie', admin),
+    ]);
+
+    // Exactly one of the two wins: whichever runs its write first leaves
+    // the other with nothing left to act on (the invitation is no longer
+    // PENDING for resend, or the old token no longer matches for accept).
+    if (acceptRes.status === 200) {
+      expect(resendRes.status).toBe(404);
+      expect(resendRes.body.error.code).toBe('INVITATION_NOT_FOUND');
+    } else {
+      expect(resendRes.status).toBe(200);
+      expect(acceptRes.status).toBe(404);
+      expect(acceptRes.body.error.code).toBe('INVITATION_NOT_FOUND');
+    }
+
+    // Either way, the old token must never work *after* this point — if
+    // accept won the race, it's now ACCEPTED (not just PENDING under a new
+    // token); if resend won, the old token simply no longer matches anything.
+    const replay = await acceptInvite(oldToken).set('Cookie', invitee);
+    expect(replay.status).not.toBe(200);
+  });
+});
+
+describe('an invitation stops working once its sender loses Admin access', () => {
+  async function findMemberId(weddingId: string, adminCookies: string[], email: string) {
+    const res = await request(app)
+      .get(`/api/v1/weddings/${weddingId}/members`)
+      .set('Cookie', adminCookies);
+    return (res.body.data.items as { id: string; email: string }[]).find((m) => m.email === email)!
+      .id;
+  }
+
+  it('revokes a removed Admin’s own pending invitations, so they can’t let themselves back in', async () => {
+    const { cookies: admin } = await registerUser();
+    const weddingId = await createWedding(admin);
+
+    // secondAdmin becomes an Admin, then invites a second email of their own
+    // as ADMIN before being removed — the exact self-reinstatement scenario.
+    const { cookies: secondAdmin, email: secondAdminEmail } = await registerUser();
+    const promo = await invite(admin, weddingId, secondAdminEmail, 'ADMIN');
+    await acceptInvite(promo.token).set('Cookie', secondAdmin);
+
+    const { cookies: ghost, email: ghostEmail } = await registerUser();
+    const ghostInvite = await invite(secondAdmin, weddingId, ghostEmail, 'ADMIN');
+
+    const secondAdminMemberId = await findMemberId(weddingId, admin, secondAdminEmail);
+    await del(`/api/v1/weddings/${weddingId}/members/${secondAdminMemberId}`).set('Cookie', admin);
+
+    const res = await acceptInvite(ghostInvite.token).set('Cookie', ghost);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('INVITATION_REVOKED');
+  });
+
+  it('revokes a demoted Admin’s own pending invitations', async () => {
+    const { cookies: admin } = await registerUser();
+    const weddingId = await createWedding(admin);
+
+    const { cookies: secondAdmin, email: secondAdminEmail } = await registerUser();
+    const promo = await invite(admin, weddingId, secondAdminEmail, 'ADMIN');
+    await acceptInvite(promo.token).set('Cookie', secondAdmin);
+
+    const { cookies: ghost, email: ghostEmail } = await registerUser();
+    const ghostInvite = await invite(secondAdmin, weddingId, ghostEmail, 'MANAGER');
+
+    const secondAdminMemberId = await findMemberId(weddingId, admin, secondAdminEmail);
+    const patchRes = await request(app)
+      .patch(`/api/v1/weddings/${weddingId}/members/${secondAdminMemberId}`)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('Cookie', admin)
+      .send({ role: 'MANAGER' });
+    expect(patchRes.status).toBe(200);
+
+    const res = await acceptInvite(ghostInvite.token).set('Cookie', ghost);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('INVITATION_REVOKED');
+  });
+
+  it('leaves a still-Admin’s pending invitations untouched when someone else is removed', async () => {
+    const { cookies: admin } = await registerUser();
+    const weddingId = await createWedding(admin);
+    await invite(admin, weddingId, 'unrelated@example.com');
+
+    const { cookies: manager, email: managerEmail } = await registerUser();
+    const managerInvite = await invite(admin, weddingId, managerEmail, 'MANAGER');
+    await acceptInvite(managerInvite.token).set('Cookie', manager);
+
+    const managerMemberId = await findMemberId(weddingId, admin, managerEmail);
+    await del(`/api/v1/weddings/${weddingId}/members/${managerMemberId}`).set('Cookie', admin);
+
+    const listRes = await request(app)
+      .get(`/api/v1/weddings/${weddingId}/invitations`)
+      .set('Cookie', admin);
+    const emails = (listRes.body.data.items as { email: string }[]).map((i) => i.email);
+    expect(emails).toContain('unrelated@example.com');
   });
 });

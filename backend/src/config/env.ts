@@ -12,6 +12,7 @@
  * See .env.example for the annotated variable list.
  */
 import { config as loadDotenv } from 'dotenv';
+import { SignJWT } from 'jose';
 import { z } from 'zod';
 
 // Vercel injects environment variables directly; a missing .env file locally is
@@ -25,18 +26,89 @@ const envBoolean = (fallback: 'true' | 'false'): z.ZodType<boolean> =>
     .default(fallback)
     .transform((value) => value.trim().toLowerCase() === 'true');
 
-/** Splits a comma-separated list into trimmed, non-empty entries. */
-const envList = z
+/**
+ * Splits a comma-separated list into trimmed, non-empty entries, each
+ * normalized to its origin (scheme + host + port) via the URL parser, not
+ * kept as a raw string. A browser's Origin header is always exactly that —
+ * never a path, and never a trailing slash — but a human pasting a URL into
+ * this env var easily adds one ("https://example.com/"). cors.ts/
+ * origin-check.ts both do exact Set.has() lookups against this list, so an
+ * un-normalized trailing slash silently never matches a real request's
+ * Origin header, and every state-changing request gets rejected with 403
+ * for a typo that looks harmless.
+ */
+const corsOriginListSchema = z
   .string()
   .default('')
-  .transform((value) =>
-    value
+  .transform((value, ctx) => {
+    const entries = value
       .split(',')
       .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0),
-  );
+      .filter((entry) => entry.length > 0);
 
-const envSchema = z
+    const origins: string[] = [];
+    for (const entry of entries) {
+      let url: URL;
+      try {
+        url = new URL(entry);
+      } catch {
+        ctx.addIssue({
+          code: 'custom',
+          message: `"${entry}" in CORS_ALLOWED_ORIGINS is not a valid URL.`,
+        });
+        continue;
+      }
+
+      // A scheme-less entry ("localhost:3000", meant as host:port) doesn't
+      // throw — the URL parser reads "localhost" itself as the *scheme* and
+      // "3000" as an opaque path, and a non-special scheme's `.origin` is
+      // the literal string "null" (verified directly: `new
+      // URL('localhost:3000').origin === 'null'`). Before this schema
+      // normalized anything, a typo like that just never matched a real
+      // Origin header and was silently harmless. Now that it's added to the
+      // allowlist Set verbatim, it would match the literal `Origin: null`
+      // header a browser sends from a sandboxed iframe or a data: URL —
+      // exactly the untrusted context CORS/CSRF are supposed to keep out —
+      // so both this and a non-http(s) scheme must be rejected outright
+      // rather than silently normalized.
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin === 'null') {
+        ctx.addIssue({
+          code: 'custom',
+          message: `"${entry}" in CORS_ALLOWED_ORIGINS must be a full http(s):// origin.`,
+        });
+        continue;
+      }
+
+      origins.push(url.origin);
+    }
+    return origins;
+  });
+
+/**
+ * jose's SignJWT.setExpirationTime() parses its string argument immediately
+ * (synchronously) and throws a TypeError for anything that doesn't match its
+ * own duration grammar ("15m", "2 days", "1 week", a bare number of
+ * seconds, etc.) — calling the real thing here, rather than re-implementing
+ * its regex, means this can never drift from whatever the installed jose
+ * version actually accepts. Without this, a malformed TTL (e.g. a typo, or
+ * a bare unitless number someone assumed meant seconds) passes env
+ * validation at boot and only surfaces as a 500 on the first login/refresh
+ * that actually tries to sign a token with it.
+ */
+function isValidJoseExpiration(value: string): boolean {
+  try {
+    new SignJWT({}).setExpirationTime(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Exported solely so tests/unit/env.test.ts can exercise the superRefine
+// checks below (secrets must differ, TTL format, CORS origin normalization)
+// directly via envSchema.safeParse(), without going through this module's
+// own process.env-reading, process.exit(1)-on-failure side effects.
+export const envSchema = z
   .object({
     // --- Application ---------------------------------------------------------
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -67,7 +139,7 @@ const envSchema = z
     COOKIE_DOMAIN: z.string().optional(),
 
     // --- CORS ----------------------------------------------------------------
-    CORS_ALLOWED_ORIGINS: envList,
+    CORS_ALLOWED_ORIGINS: corsOriginListSchema,
 
     // --- Cloudflare R2 -------------------------------------------------------
     R2_ACCOUNT_ID: z.string().optional(),
@@ -104,6 +176,31 @@ const envSchema = z
         path: ['COOKIE_SECURE'],
         message: 'COOKIE_SECURE must be true when COOKIE_SAMESITE is "none" — browsers reject it.',
       });
+    }
+
+    // Sharing one secret between access and refresh tokens lets a refresh
+    // token be replayed as an access token (auth.tokens.ts) — the comment on
+    // JWT_ACCESS_SECRET above documents this, but nothing previously
+    // enforced it.
+    if (env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JWT_REFRESH_SECRET'],
+        message: 'JWT_REFRESH_SECRET must be different from JWT_ACCESS_SECRET.',
+      });
+    }
+
+    // Every environment, not just production — a malformed TTL is a bug
+    // regardless, and this is where it should fail: at boot, not on the
+    // first login/refresh that tries to sign a token with it.
+    for (const key of ['JWT_ACCESS_TTL', 'JWT_REFRESH_TTL', 'GUEST_SESSION_TTL'] as const) {
+      if (!isValidJoseExpiration(env[key])) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key}="${env[key]}" is not a valid duration (e.g. "15m", "7d", "2 hours").`,
+        });
+      }
     }
 
     if (env.NODE_ENV !== 'production') return;

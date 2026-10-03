@@ -136,6 +136,71 @@ describe('deepRedact — Error values', () => {
     expect(result.a.b.err).toBeInstanceOf(Error);
     expect(result.a.b.err.message).toBe('nested failure');
   });
+
+  it('redacts a sensitive extra property a subclass or library attached to an Error', () => {
+    // message/stack are non-enumerable on the base Error prototype, so they
+    // survive untouched regardless — but an explicitly-assigned extra
+    // property (AppError's own `code`; an HTTP client library attaching its
+    // whole request config, auth headers included, to a thrown error) IS
+    // enumerable, and was previously never walked at all.
+    class LibError extends Error {
+      token: string;
+      constructor(message: string, token: string) {
+        super(message);
+        this.token = token;
+      }
+    }
+    const err = new LibError('request failed', 'super-secret-token');
+    const result = deepRedact(err) as LibError;
+
+    expect(result).toBeInstanceOf(Error);
+    expect(result.message).toBe('request failed');
+    expect(result.token).toBe(REDACTED_CENSOR);
+  });
+
+  it('does not mutate the original Error instance passed in', () => {
+    class LibError extends Error {
+      token: string;
+      constructor(message: string, token: string) {
+        super(message);
+        this.token = token;
+      }
+    }
+    const err = new LibError('request failed', 'super-secret-token');
+    deepRedact(err);
+
+    expect(err.token).toBe('super-secret-token');
+  });
+
+  it('preserves an Error’s cause chain (non-enumerable, easy to drop by accident)', () => {
+    const inner = new Error('raw provider detail');
+    const outer = new Error('generic wrapper', { cause: inner });
+    const result = deepRedact(outer) as Error;
+
+    expect(result.cause).toBeInstanceOf(Error);
+    expect((result.cause as Error).message).toBe('raw provider detail');
+  });
+
+  it('redacts a sensitive key inside a plain-object cause', () => {
+    const outer = new Error('wrapper', { cause: { token: 'leaked-via-cause' } });
+    const result = deepRedact(outer) as Error & { cause: { token: string } };
+
+    expect(result.cause.token).toBe(REDACTED_CENSOR);
+  });
+
+  it('preserves a non-sensitive extra property on an Error subclass', () => {
+    class AppLikeError extends Error {
+      code: string;
+      constructor(message: string, code: string) {
+        super(message);
+        this.code = code;
+      }
+    }
+    const err = new AppLikeError('not found', 'NOT_FOUND');
+    const result = deepRedact(err) as AppLikeError;
+
+    expect(result.code).toBe('NOT_FOUND');
+  });
 });
 
 describe('deepRedact — the configured depth cutoff', () => {

@@ -5,7 +5,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '#middleware/authenticate.js';
-import { rateLimit } from '#middleware/rate-limit.js';
+import { emailKey, rateLimit } from '#middleware/rate-limit.js';
 import { validate } from '#middleware/validate.js';
 
 import {
@@ -36,6 +36,7 @@ authRouter.post(
 authRouter.post(
   '/auth/login',
   rateLimit('auth:login'),
+  rateLimit('auth:login-per-email', emailKey),
   validate({ body: loginBodySchema }),
   postLogin,
 );

@@ -190,38 +190,70 @@ export async function listInvitations(
   };
 }
 
+/**
+ * Revokes every still-PENDING invitation a given member has sent for a
+ * wedding — called by members.service.ts when that member is removed or
+ * demoted off ADMIN. Only an ADMIN can ever create an invitation (ADMIN-only
+ * route), so once the inviter is no longer one, an invitation they already
+ * issued should stop being acceptable too — otherwise removing or demoting
+ * someone only stops them from sending *new* invitations, not from the
+ * access they already handed out via one still sitting unanswered (e.g. an
+ * Admin invites their own second email address as ADMIN, is then removed,
+ * and that invitation would otherwise still let them back in).
+ */
+export async function revokePendingInvitationsFrom(
+  weddingId: string,
+  invitedByUserId: string,
+  session?: mongoose.ClientSession,
+): Promise<void> {
+  await WeddingInvitation.updateMany(
+    { weddingId, invitedBy: invitedByUserId, status: 'PENDING' },
+    { status: 'REVOKED', revokedAt: new Date() },
+    session ? { session } : {},
+  );
+}
+
+/**
+ * Conditional update rather than findOne()+save() — the latter reads the
+ * document, mutates it in memory, and writes it back with no check that
+ * `status` is still what it was at read time. A concurrent accept
+ * completing in between would get silently overwritten (an admin revoking
+ * the instant someone else accepts would un-accept them, at least on the
+ * invitation's own record), caught by the equivalent race in
+ * acceptInvitation's own conditional update — this closes the same class of
+ * bug here.
+ */
 export async function revokeInvitation(weddingId: string, invitationId: string): Promise<void> {
-  const invitation = await WeddingInvitation.findOne({
-    _id: invitationId,
-    weddingId,
-    status: 'PENDING',
-  });
+  const invitation = await WeddingInvitation.findOneAndUpdate(
+    { _id: invitationId, weddingId, status: 'PENDING' },
+    { status: 'REVOKED', revokedAt: new Date() },
+  );
   if (!invitation) {
     throw AppError.notFound('Invitation not found.', ErrorCode.INVITATION_NOT_FOUND);
   }
-
-  invitation.status = 'REVOKED';
-  invitation.revokedAt = new Date();
-  await invitation.save();
 }
 
 export async function resendInvitation(
   weddingId: string,
   invitationId: string,
 ): Promise<{ invitation: InvitationSummary } & DeliverInvitationResult> {
-  const invitation = await WeddingInvitation.findOne({
-    _id: invitationId,
-    weddingId,
-    status: 'PENDING',
-  });
+  // Same conditional-update reasoning as revokeInvitation() just above —
+  // without it, a resend racing a just-completed accept would silently
+  // reissue a token for an invitation that's actually already ACCEPTED (the
+  // new token would still be rejected at accept time by the status check
+  // there, but the resend call itself would misleadingly report success).
+  const rawToken = generateInvitationToken();
+  const invitation = await WeddingInvitation.findOneAndUpdate(
+    { _id: invitationId, weddingId, status: 'PENDING' },
+    {
+      tokenHash: hashInvitationToken(rawToken),
+      expiresAt: new Date(Date.now() + INVITATION_TOKEN_TTL_MS),
+    },
+    { returnDocument: 'after' },
+  );
   if (!invitation) {
     throw AppError.notFound('Invitation not found.', ErrorCode.INVITATION_NOT_FOUND);
   }
-
-  const rawToken = generateInvitationToken();
-  invitation.tokenHash = hashInvitationToken(rawToken);
-  invitation.expiresAt = new Date(Date.now() + INVITATION_TOKEN_TTL_MS);
-  await invitation.save();
 
   const delivery = await deliverInvitationEmail(
     invitation.weddingId,
@@ -285,9 +317,13 @@ export async function acceptInvitation(
   rawToken: string,
   userId: string,
 ): Promise<{ wedding: WeddingDocument; role: MemberRole }> {
-  const invitation = await WeddingInvitation.findOne({
-    tokenHash: hashInvitationToken(rawToken),
-  });
+  // Computed once and reused in the atomic update's filter below, rather
+  // than read back off `invitation.tokenHash` — the model marks tokenHash
+  // `select: false`, so it wouldn't actually come back on the document
+  // without an explicit `.select('+tokenHash')`, and this value is already
+  // known here regardless.
+  const tokenHash = hashInvitationToken(rawToken);
+  const invitation = await WeddingInvitation.findOne({ tokenHash });
   if (!invitation) {
     throw AppError.notFound('This invitation link is invalid.', ErrorCode.INVITATION_NOT_FOUND);
   }
@@ -328,12 +364,17 @@ export async function acceptInvitation(
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      // Atomic, conditional on still being PENDING — the only thing that
-      // actually prevents a concurrent revoke (or a second accept racing in
-      // from another tab) from sneaking past the pre-checks above and
-      // reusing this same invitation.
+      // Atomic, conditional on both still being PENDING *and* the token
+      // still being the one this request actually matched against — the
+      // only thing that actually prevents a concurrent revoke, a resend
+      // (which overwrites tokenHash in place — invitations.service.ts's
+      // resendInvitation), or a second accept racing in from another tab
+      // from sneaking past the pre-checks above and reusing this same
+      // invitation. Without the tokenHash condition, a request already
+      // holding the old token could still win this update right after a
+      // resend replaced it, since status alone never changes on resend.
       const accepted = await WeddingInvitation.findOneAndUpdate(
-        { _id: invitation._id, status: 'PENDING' },
+        { _id: invitation._id, status: 'PENDING', tokenHash },
         { status: 'ACCEPTED', acceptedBy: new Types.ObjectId(userId), acceptedAt: new Date() },
         { session },
       );
@@ -345,10 +386,17 @@ export async function acceptInvitation(
             ErrorCode.INVITATION_REVOKED,
           );
         }
-        throw AppError.conflict(
-          'This invitation has already been used.',
-          ErrorCode.INVITATION_ALREADY_ACCEPTED,
-        );
+        if (current?.status === 'ACCEPTED') {
+          throw AppError.conflict(
+            'This invitation has already been used.',
+            ErrorCode.INVITATION_ALREADY_ACCEPTED,
+          );
+        }
+        // Still PENDING, so the tokenHash condition is what failed — a
+        // resend replaced this token with a new one in the meantime. From
+        // this token's own perspective that's indistinguishable from it
+        // never having been valid.
+        throw AppError.notFound('This invitation link is invalid.', ErrorCode.INVITATION_NOT_FOUND);
       }
 
       try {

@@ -82,7 +82,29 @@ function hasWellFormedError(
   return typeof code === "string" && typeof message === "string";
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+// Access cookies are short-lived (15 min) — without this, any page session
+// left open longer than that treats its very next request's 401 as "logged
+// out" and bounces to sign-in, discarding whatever the user was doing (e.g.
+// mid-edit on a form). One shared in-flight refresh promise means N requests
+// that all 401 around the same moment trigger exactly one POST /auth/refresh,
+// not N of them.
+const AUTH_PATH_PREFIX = "/auth/";
+let refreshPromise: Promise<boolean> | null = null;
+
+function refreshSession(): Promise<boolean> {
+  refreshPromise ??= fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    credentials: "include",
+  })
+    .then((res) => res.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
+async function apiFetch<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
@@ -92,6 +114,18 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
   } catch {
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection.");
+  }
+
+  // Auth endpoints are excluded: a stale/absent session can't be fixed by
+  // refreshing it, and retrying a wrong-password /auth/login would just
+  // waste a round trip before showing the same error. `isRetry` caps this at
+  // one attempt — a 401 right after a successful refresh means something
+  // else is wrong, not a token that needs refreshing again.
+  if (res.status === 401 && !isRetry && !path.startsWith(AUTH_PATH_PREFIX)) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return apiFetch<T>(path, init, true);
+    }
   }
 
   // DELETE /weddings/:weddingId/members/:memberId (removeMember() below)
@@ -218,7 +252,7 @@ export function listMyWeddings(): Promise<{ items: Wedding[]; pagination: Pagina
 }
 
 export function getWedding(weddingId: string): Promise<{ wedding: Wedding }> {
-  return apiFetch(`/weddings/${weddingId}`);
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}`);
 }
 
 /**
@@ -241,7 +275,10 @@ export function updateWedding(
   weddingId: string,
   body: UpdateWeddingBody,
 ): Promise<{ wedding: Wedding }> {
-  return apiFetch(`/weddings/${weddingId}`, { method: "PATCH", body: JSON.stringify(body) });
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 export type MemberRole = "ADMIN" | "MANAGER";
@@ -260,14 +297,14 @@ export function listMembers(
   weddingId: string,
   limit = 100,
 ): Promise<{ items: Member[]; pagination: Pagination }> {
-  return apiFetch(`/weddings/${weddingId}/members?limit=${limit}`);
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/members?limit=${limit}`);
 }
 
 export function addMember(
   weddingId: string,
   body: { email: string; role: MemberRole },
 ): Promise<{ member: Member }> {
-  return apiFetch(`/weddings/${weddingId}/members`, {
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/members`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -278,14 +315,17 @@ export function updateMemberRole(
   memberId: string,
   role: MemberRole,
 ): Promise<{ member: Member }> {
-  return apiFetch(`/weddings/${weddingId}/members/${memberId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ role }),
-  });
+  return apiFetch(
+    `/weddings/${encodeURIComponent(weddingId)}/members/${encodeURIComponent(memberId)}`,
+    { method: "PATCH", body: JSON.stringify({ role }) },
+  );
 }
 
 export function removeMember(weddingId: string, memberId: string): Promise<undefined> {
-  return apiFetch(`/weddings/${weddingId}/members/${memberId}`, { method: "DELETE" });
+  return apiFetch(
+    `/weddings/${encodeURIComponent(weddingId)}/members/${encodeURIComponent(memberId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export type EventStatus = "DRAFT" | "ACTIVE" | "CANCELLED" | "ARCHIVED";
@@ -318,7 +358,7 @@ export function getEvents(
   weddingId: string,
   limit = 100,
 ): Promise<{ items: WeddingEvent[]; pagination: Pagination }> {
-  return apiFetch(`/weddings/${weddingId}/events?limit=${limit}`);
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/events?limit=${limit}`);
 }
 
 /**
@@ -341,11 +381,16 @@ export function createEvent(
   weddingId: string,
   body: CreateEventBody,
 ): Promise<{ event: WeddingEvent }> {
-  return apiFetch(`/weddings/${weddingId}/events`, { method: "POST", body: JSON.stringify(body) });
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/events`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function getEvent(weddingId: string, eventId: string): Promise<{ event: WeddingEvent }> {
-  return apiFetch(`/weddings/${weddingId}/events/${eventId}`);
+  return apiFetch(
+    `/weddings/${encodeURIComponent(weddingId)}/events/${encodeURIComponent(eventId)}`,
+  );
 }
 
 export type InvitationStatus = "PENDING" | "ACCEPTED" | "REVOKED";
@@ -373,7 +418,7 @@ export function createInvitation(
   weddingId: string,
   body: { email: string; role: MemberRole },
 ): Promise<InvitationActionResult> {
-  return apiFetch(`/weddings/${weddingId}/invitations`, {
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/invitations`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -383,18 +428,24 @@ export function listInvitations(
   weddingId: string,
   limit = 100,
 ): Promise<{ items: Invitation[]; pagination: Pagination }> {
-  return apiFetch(`/weddings/${weddingId}/invitations?limit=${limit}`);
+  return apiFetch(`/weddings/${encodeURIComponent(weddingId)}/invitations?limit=${limit}`);
 }
 
 export function revokeInvitation(weddingId: string, invitationId: string): Promise<undefined> {
-  return apiFetch(`/weddings/${weddingId}/invitations/${invitationId}`, { method: "DELETE" });
+  return apiFetch(
+    `/weddings/${encodeURIComponent(weddingId)}/invitations/${encodeURIComponent(invitationId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function resendInvitation(
   weddingId: string,
   invitationId: string,
 ): Promise<InvitationActionResult> {
-  return apiFetch(`/weddings/${weddingId}/invitations/${invitationId}/resend`, { method: "POST" });
+  return apiFetch(
+    `/weddings/${encodeURIComponent(weddingId)}/invitations/${encodeURIComponent(invitationId)}/resend`,
+    { method: "POST" },
+  );
 }
 
 export interface InvitationPreview {

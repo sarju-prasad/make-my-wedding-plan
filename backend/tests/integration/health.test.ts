@@ -44,6 +44,19 @@ describe('unmatched routes and the error envelope', () => {
     });
   });
 
+  it('does not echo the query string into the 404 message', async () => {
+    // not-found.ts uses req.path, not req.originalUrl, specifically so a
+    // query string (which could carry a mistyped/leaked token) never ends
+    // up in this message — and therefore never in the log line it's passed
+    // to, which core/logger/redaction.ts can't scrub (it only redacts by
+    // object key, not by scanning string values).
+    const res = await request(app).get('/api/v1/this-route-does-not-exist?token=super-secret');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.message).not.toContain('super-secret');
+    expect(res.body.error.message).toContain('/api/v1/this-route-does-not-exist');
+  });
+
   it('sets an x-request-id response header even on a 404', async () => {
     const res = await request(app).get('/api/v1/nope');
     expect(res.headers['x-request-id']).toBeTruthy();

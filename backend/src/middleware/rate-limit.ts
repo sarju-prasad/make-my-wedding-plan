@@ -55,6 +55,28 @@ export const RATE_LIMIT_POLICIES = {
   // spamming arbitrary inboxes from this app's sending domain.
   'invitation:create': { points: 10, duration: 60, blockDuration: 300 },
   'invitation:resend': { points: 10, duration: 60, blockDuration: 300 },
+  // addMember() looks a registered email up and reports back whether it
+  // found one — an unavoidable part of "add an existing user by email"
+  // working at all, but with no limit at all it's a fast account-enumeration
+  // oracle (any Admin of any wedding, including one they just created
+  // themselves, can probe arbitrary emails). Same shape as the invitation
+  // policies above, not just login's: this is still an email-guessing loop,
+  // just reached through a different route.
+  'member:add': { points: 10, duration: 60, blockDuration: 300 },
+  // Layered alongside auth:login's per-IP limit, not instead of it — an
+  // attacker distributing login attempts across many IPs (or, once a
+  // frontend proxy means many legitimate users share one IP, a single
+  // attacker hiding among them) would otherwise never trip a per-IP-only
+  // limit no matter how many guesses they make against one target account.
+  //
+  // Conscious trade-off, not an oversight: this also means anyone who knows
+  // a user's email can lock that account out of login indefinitely, just by
+  // re-triggering the block (10 attempts/60s, then a 5-minute block,
+  // repeatable forever) — the same trade-off most apps with a per-account
+  // lockout make. Mitigating it would need something this app doesn't have
+  // yet (CAPTCHA, a progressively increasing block, or alerting the account
+  // owner) — accepted for now rather than left unconsidered.
+  'auth:login-per-email': { points: 10, duration: 60, blockDuration: 300 },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyName = keyof typeof RATE_LIMIT_POLICIES;
@@ -85,19 +107,31 @@ async function getLimiter(name: RateLimitPolicyName): Promise<RateLimiterMongo> 
  * Keys by client IP. Requires `app.set('trust proxy', ...)` (set in app.ts)
  * so `req.ip` reflects the real client behind Vercel's proxy rather than
  * the proxy's own address — without it, every request shares one key.
- *
- * A future authenticated-context limiter (e.g. per-user rather than per-IP)
- * can layer a different key function once the auth module exists; nothing
- * here presumes IP is the only valid key.
  */
 function defaultKey(req: Request): string {
   return req.ip ?? 'unknown';
 }
 
-export function rateLimit(policyName: RateLimitPolicyName): RequestHandler {
+/**
+ * Keys by the submitted email instead of IP — layered onto auth:login
+ * alongside the default per-IP policy (see RATE_LIMIT_POLICIES'
+ * auth:login-per-email). Reads the raw request body directly rather than
+ * `req.validated`, since this middleware runs before validate() — a
+ * missing/malformed email just becomes a single shared "unknown" bucket,
+ * which is no worse than no per-email limit at all.
+ */
+export function emailKey(req: Request): string {
+  const email: unknown = (req.body as Record<string, unknown> | undefined)?.email;
+  return typeof email === 'string' ? email.trim().toLowerCase() : 'unknown';
+}
+
+export function rateLimit(
+  policyName: RateLimitPolicyName,
+  keyFn: (req: Request) => string = defaultKey,
+): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     getLimiter(policyName)
-      .then((limiter) => limiter.consume(defaultKey(req)))
+      .then((limiter) => limiter.consume(keyFn(req)))
       .then(() => {
         next();
       })

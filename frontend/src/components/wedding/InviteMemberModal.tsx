@@ -76,7 +76,12 @@ export function InviteMemberModal({
   }
 
   return (
-    <Modal titleId="invite-modal-title" onClose={onClose} widthClassName="max-w-lg">
+    <Modal
+      titleId="invite-modal-title"
+      onClose={onClose}
+      widthClassName="max-w-lg"
+      closeDisabled={submitting}
+    >
       <div className="mb-space-md flex items-start justify-between">
         <div>
           <span className="font-label-sm text-label-sm font-semibold tracking-wider text-primary uppercase">
@@ -92,8 +97,9 @@ export function InviteMemberModal({
         <button
           type="button"
           onClick={onClose}
+          disabled={submitting}
           aria-label="Close"
-          className="rounded-lg p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface"
+          className="rounded-lg p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface disabled:opacity-60"
         >
           <span className="material-symbols-outlined text-[20px]">close</span>
         </button>

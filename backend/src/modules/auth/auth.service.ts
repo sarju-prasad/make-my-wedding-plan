@@ -197,8 +197,41 @@ export interface RequestPasswordResetResult {
   devResetUrl?: string;
 }
 
+/**
+ * Response bodies for the real-account and no-account paths are already
+ * identical in production (api_design.docx §5.5) — but the real path does a
+ * DB write and, when configured, a network round trip to Resend, while the
+ * no-account path previously returned immediately. That's a timing oracle:
+ * measuring response time reveals whether an email is registered just as
+ * surely as a different response body would. loginUser() closes the
+ * equivalent gap by always running the Argon2id comparison; there's no
+ * single fixed-cost operation to mirror that here (there's no real token to
+ * hash or email to send for an account that doesn't exist), so instead both
+ * paths are padded up to the same floor — only a real path slower than the
+ * floor itself (a sluggish Resend call) still leaks timing, which is a far
+ * narrower, noisier signal than every single request reliably doing so.
+ */
+const PASSWORD_RESET_MIN_RESPONSE_MS = 500;
+
+async function withMinimumDuration<T>(work: Promise<T>, minMs: number): Promise<T> {
+  const startedAt = Date.now();
+  const result = await work;
+  const remaining = minMs - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+  }
+  return result;
+}
+
 /** api_design.docx §5.5: always a generic outcome — never reveals whether the email exists. */
 export async function requestPasswordReset(email: string): Promise<RequestPasswordResetResult> {
+  return await withMinimumDuration(
+    requestPasswordResetUnpadded(email),
+    PASSWORD_RESET_MIN_RESPONSE_MS,
+  );
+}
+
+async function requestPasswordResetUnpadded(email: string): Promise<RequestPasswordResetResult> {
   const user = await User.findOne({ email });
   if (!user) {
     return {};

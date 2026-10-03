@@ -7,14 +7,13 @@ import { type FormEvent, Suspense, useState } from "react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { TextField } from "@/components/auth/TextField";
 import { registerUser, toErrorMessage } from "@/lib/api";
-import { isSafeRedirect } from "@/lib/safe-redirect";
+import { resolveSafeRedirect } from "@/lib/safe-redirect";
 
 function SignUpForm() {
   const router = useRouter();
   // See sign-in/page.tsx for why — same ?next= convention, same fallback,
   // same open-redirect guard.
-  const rawNext = useSearchParams().get("next");
-  const next = isSafeRedirect(rawNext) ? rawNext : "/weddings";
+  const next = resolveSafeRedirect(useSearchParams().get("next"));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

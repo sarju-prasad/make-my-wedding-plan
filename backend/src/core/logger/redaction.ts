@@ -50,13 +50,64 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase().replace(/[_-]/g, ''));
 }
 
+/**
+ * message/stack are non-enumerable on the base Error prototype (verified
+ * directly: `Object.keys(new Error('x'))` is `[]`) — exactly why deepRedact
+ * short-circuits on `instanceof Error` at all, rather than walking it with
+ * the same Object.entries() loop used for plain objects, which would
+ * "flatten" it to `{}` and lose them (pino's own downstream Error handling
+ * is what actually surfaces message/stack in the final log line, not this
+ * function).
+ *
+ * But a subclass (AppError's own `code`/`httpStatus`/`details`/`name`) or a
+ * third-party library's error (an HTTP client that attaches its entire
+ * request config, headers included, to a thrown error) CAN add genuinely
+ * enumerable own properties — those must be redacted by key exactly like
+ * any plain object's fields, or a secret smuggled in through one is never
+ * caught. Clones rather than mutates the original error in place: the same
+ * error instance logged here may still be read elsewhere after this call
+ * returns (e.g. error-handler.ts reads `appError.details` right after
+ * logging it), and logging must not have a mutating side effect on it.
+ */
+function redactErrorExtras(error: Error, depth: number): Error {
+  const clone = Object.create(Object.getPrototypeOf(error) as object) as Error &
+    Record<string, unknown>;
+  clone.message = error.message;
+  // exactOptionalPropertyTypes forbids assigning `undefined` explicitly to
+  // an optional property (stack?: string, not string | undefined) — guard
+  // rather than assign unconditionally, since a stack trace isn't always
+  // present (e.g. an Error constructed without one in certain engines).
+  if (error.stack !== undefined) {
+    clone.stack = error.stack;
+  }
+  // cause is non-enumerable too (same as message/stack — `error.cause` was
+  // confirmed absent from Object.entries() directly against the installed
+  // Node version), so the loop below never reaches it on its own. Pino's own
+  // Error serialization follows and logs a cause chain automatically (also
+  // verified directly), which is exactly why AppError's own error-mappers.ts
+  // uses `cause` to carry a wrapped exception's detail for logging without
+  // putting it in the client-facing `message` — dropping it here would
+  // silently lose that detail from every such log line.
+  if ('cause' in error) {
+    clone.cause = deepRedact(error.cause, depth + 1);
+  }
+  for (const [key, val] of Object.entries(error)) {
+    clone[key] = isSensitiveKey(key) ? REDACTED_CENSOR : deepRedact(val, depth + 1);
+  }
+  return clone;
+}
+
 export function deepRedact(value: unknown, depth = 0): unknown {
   if (depth >= MAX_REDACT_DEPTH || value === null || typeof value !== 'object') {
     return value;
   }
 
-  if (value instanceof Date || value instanceof Error) {
+  if (value instanceof Date) {
     return value;
+  }
+
+  if (value instanceof Error) {
+    return redactErrorExtras(value, depth);
   }
 
   if (Array.isArray(value)) {

@@ -76,6 +76,42 @@ function isMongoConnectivityError(error: unknown): boolean {
   );
 }
 
+/**
+ * express.json()/express.urlencoded() (both backed by body-parser, which
+ * builds every error it throws via the `http-errors` package) throw before
+ * any route handler — and therefore before `validate()` ever runs — gets a
+ * chance to see the request: a malformed body, one over
+ * config/constants.ts's JSON_BODY_LIMIT, an unsupported charset/content
+ * encoding, or the client aborting mid-upload all take this path. Without
+ * this, every one of them came back as a generic 500 (an unrecognised Error
+ * falls through to AppError.internal()) instead of the 4xx they actually
+ * are, and got logged as server bugs rather than ordinary client-request
+ * problems.
+ *
+ * Keyed on `status`/`expose` — the fields http-errors always sets, verified
+ * directly against the installed version — rather than on body-parser's own
+ * per-case `type` strings (`entity.parse.failed`, `entity.too.large`,
+ * `charset.unsupported`, …). Enumerating each `type` individually means a
+ * case this file's author didn't think of (or a future body-parser version
+ * adding a new one) silently falls through to the generic 500 this exists
+ * to avoid; `status`/`expose` cover all of them at once, including ones
+ * from any other http-errors-based middleware, not just this one.
+ * `expose` is http-errors' own signal for whether `.message` is safe to
+ * show a client (true for 4xx, false for 5xx) — reused here rather than
+ * re-deciding that per error.
+ */
+interface HttpErrorLike {
+  status: number;
+  expose: boolean;
+  message: string;
+}
+
+function isHttpError(error: unknown): error is HttpErrorLike {
+  if (typeof error !== 'object' || error === null) return false;
+  const { status, expose } = error as Record<string, unknown>;
+  return typeof status === 'number' && status >= 400 && status < 500 && typeof expose === 'boolean';
+}
+
 function formatZodIssues(issues: ZodIssue[]): { path: string; message: string }[] {
   return issues.map((issue) => ({
     path: issue.path.join('.') || '(root)',
@@ -95,6 +131,15 @@ export function mapKnownError(error: unknown): AppError | null {
 
   if (error instanceof ZodError) {
     return AppError.validation('Request validation failed.', formatZodIssues(error.issues));
+  }
+
+  if (isHttpError(error)) {
+    const code = error.status === 413 ? ErrorCode.PAYLOAD_TOO_LARGE : ErrorCode.MALFORMED_REQUEST;
+    return new AppError({
+      code,
+      httpStatus: error.status,
+      message: error.expose ? error.message : 'The request could not be processed.',
+    });
   }
 
   if (error instanceof MongooseError.CastError) {

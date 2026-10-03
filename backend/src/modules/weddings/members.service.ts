@@ -5,13 +5,14 @@
  * Managers"; api_design.docx §9: "Only ADMIN can change roles or remove
  * members" — extended here to also cover adding, consistent with the PRD).
  */
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 
 import { AppError, ErrorCode, isDuplicateKeyError } from '#core/errors/index.js';
 import { buildPagination, toSkip, type PaginationQuery } from '#core/http/pagination.js';
 
 import { findUserByEmail } from '../auth/auth.service.js';
 
+import { revokePendingInvitationsFrom } from './invitations.service.js';
 import { WeddingMember, type MemberRole } from './members.model.js';
 import type { AddMemberBody } from './members.validation.js';
 
@@ -175,12 +176,30 @@ export async function updateMemberRole(
     throw AppError.notFound('Member not found.', ErrorCode.MEMBER_NOT_FOUND);
   }
 
-  if (member.role === 'ADMIN' && newRole !== 'ADMIN') {
+  const wasAdmin = member.role === 'ADMIN';
+  if (wasAdmin && newRole !== 'ADMIN') {
     await assertWouldNotRemoveLastAdmin(weddingId, memberId);
   }
 
-  member.role = newRole;
-  await member.save();
+  // Transactional with the invitation revocation below — a demotion that
+  // "succeeded" but left the demoted Admin's own pending invitations usable
+  // (because the second step failed after the first had already committed)
+  // would silently reopen exactly the access the demotion was meant to
+  // close.
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      member.role = newRole;
+      await member.save({ session });
+
+      if (wasAdmin && newRole !== 'ADMIN') {
+        await revokePendingInvitationsFrom(weddingId, String(member.userId._id), session);
+      }
+    });
+  } finally {
+    await session.endSession();
+  }
+
   return toSummary(member);
 }
 
@@ -194,6 +213,20 @@ export async function removeMember(weddingId: string, memberId: string): Promise
     await assertWouldNotRemoveLastAdmin(weddingId, memberId);
   }
 
-  member.status = 'REMOVED';
-  await member.save();
+  // Same transactional reasoning as updateMemberRole above.
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      member.status = 'REMOVED';
+      await member.save({ session });
+
+      // Unconditional regardless of the removed member's final role: a
+      // no-op if they never sent an invitation (or already had their
+      // pending ones revoked at demotion time), and the only safety net if
+      // they're removed directly from ADMIN without a demotion step first.
+      await revokePendingInvitationsFrom(weddingId, String(member.userId), session);
+    });
+  } finally {
+    await session.endSession();
+  }
 }
