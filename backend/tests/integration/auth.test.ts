@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { env } from '../../src/config/env.js';
 import { User } from '../../src/modules/auth/auth.model.js';
+import { parseDurationMs } from '../../src/utils/duration.js';
 
 const app = createApp();
 
@@ -52,6 +53,28 @@ describe('POST /api/v1/auth/register', () => {
     const cookieHeader = res.headers['set-cookie'] as unknown as string[];
     expect(cookieHeader.some((c) => c.startsWith('access_token='))).toBe(true);
     expect(cookieHeader.some((c) => c.startsWith('refresh_token='))).toBe(true);
+  });
+
+  // The property the browser flow actually depends on (cookies.ts's own
+  // setAccessCookie comment explains why): a browser stops sending a
+  // cookie once its own Max-Age has passed, independent of whether the JWT
+  // inside it has expired. If the access cookie's Max-Age matched
+  // JWT_ACCESS_TTL, the browser would discard it at essentially the same
+  // instant the token itself expires — the backend would then see no
+  // cookie at all on the next request, not an expired one, and
+  // ACCESS_TOKEN_EXPIRED (and therefore apiFetch's refresh-and-retry)
+  // would never actually trigger outside a test that attaches an expired
+  // token by hand.
+  it('sets the access cookie’s Max-Age to at least the refresh token TTL', async () => {
+    const res = await post('/api/v1/auth/register').send(VALID_REGISTRATION);
+
+    const cookieHeader = res.headers['set-cookie'] as unknown as string[];
+    const accessCookie = cookieHeader.find((c) => c.startsWith('access_token='));
+    const maxAgeMatch = accessCookie?.match(/Max-Age=(\d+)/i);
+    expect(maxAgeMatch).toBeTruthy();
+
+    const accessCookieMaxAgeMs = Number(maxAgeMatch![1]) * 1000;
+    expect(accessCookieMaxAgeMs).toBeGreaterThanOrEqual(parseDurationMs(env.JWT_REFRESH_TTL));
   });
 
   it('rejects a duplicate email with EMAIL_ALREADY_EXISTS', async () => {
