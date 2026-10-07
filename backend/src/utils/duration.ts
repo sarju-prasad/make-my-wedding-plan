@@ -31,5 +31,12 @@ export function parseDurationMs(value: string): number {
     throw new Error(`Invalid duration "${value}" — expected a format like "15m", "2h", or "7d".`);
   }
 
+  // "0s"/"0m" match DURATION_PATTERN fine but aren't a valid TTL for any of
+  // this function's actual callers — a cookie maxAge or token expiry of
+  // zero issues something that's already expired the instant it's created.
+  if (amount === '0') {
+    throw new Error(`Invalid duration "${value}" — a zero-length TTL isn't meaningful.`);
+  }
+
   return Number(amount) * UNIT_TO_MS[unit];
 }

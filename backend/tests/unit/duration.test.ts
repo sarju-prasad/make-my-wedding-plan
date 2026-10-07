@@ -15,4 +15,11 @@ describe('parseDurationMs', () => {
   it.each(['', 'bogus', '15', 'm', '15x', '-5m', '15 m'])('rejects invalid input "%s"', (input) => {
     expect(() => parseDurationMs(input)).toThrow(/Invalid duration/);
   });
+
+  // Matches DURATION_PATTERN fine, but a zero-length TTL issues a cookie or
+  // token that's already expired the instant it's created — never a
+  // meaningful value for any of this function's actual callers.
+  it.each(['0s', '0m', '0h', '0d'])('rejects a zero-length duration "%s"', (input) => {
+    expect(() => parseDurationMs(input)).toThrow(/Invalid duration/);
+  });
 });

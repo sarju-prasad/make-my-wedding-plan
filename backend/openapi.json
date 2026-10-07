@@ -2049,6 +2049,7 @@
                   "MALFORMED_REQUEST",
                   "PAYLOAD_TOO_LARGE",
                   "UNAUTHORIZED",
+                  "ACCESS_TOKEN_EXPIRED",
                   "FORBIDDEN",
                   "NOT_FOUND",
                   "EMAIL_ALREADY_EXISTS",

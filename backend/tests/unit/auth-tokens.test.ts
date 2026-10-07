@@ -1,5 +1,7 @@
+import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 
+import { env } from '../../src/config/env.js';
 import {
   signAccessToken,
   signRefreshToken,
@@ -32,6 +34,23 @@ describe('access tokens', () => {
     await expect(
       verifyAccessToken(`${header}.${forgedPayload}.${signature}`),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  // Distinct from every other rejection above: lib/api.ts's refresh-and-retry
+  // only fires for this exact code, not a generic UNAUTHORIZED — an expired
+  // token (unlike a malformed/tampered one) is the one case a refresh can
+  // actually fix.
+  it('rejects an expired token with ACCESS_TOKEN_EXPIRED, not a generic UNAUTHORIZED', async () => {
+    const secret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
+    const expiredToken = await new SignJWT({ sub: '507f1f77bcf86cd799439011' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('-10s')
+      .sign(secret);
+
+    await expect(verifyAccessToken(expiredToken)).rejects.toMatchObject({
+      code: 'ACCESS_TOKEN_EXPIRED',
+    });
   });
 });
 

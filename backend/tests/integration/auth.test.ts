@@ -1,7 +1,9 @@
+import { SignJWT } from 'jose';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../../src/app.js';
+import { env } from '../../src/config/env.js';
 import { User } from '../../src/modules/auth/auth.model.js';
 
 const app = createApp();
@@ -206,9 +208,30 @@ describe('POST /api/v1/auth/refresh and /auth/me', () => {
     return res.headers['set-cookie'] as unknown as string[];
   }
 
-  it('me returns 401 without a session', async () => {
+  it('me returns 401 UNAUTHORIZED (not ACCESS_TOKEN_EXPIRED) without a session', async () => {
+    // No cookie at all is a different situation than an expired one —
+    // lib/api.ts's apiFetch only retries-after-refresh on the latter
+    // (ACCESS_TOKEN_EXPIRED specifically), since there's nothing to refresh
+    // here in the first place.
     const res = await request(app).get('/api/v1/auth/me');
     expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('me returns 401 ACCESS_TOKEN_EXPIRED for an expired (but otherwise valid) access token', async () => {
+    const secret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
+    const expiredToken = await new SignJWT({ sub: '507f1f77bcf86cd799439011' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('-10s')
+      .sign(secret);
+
+    const res = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Cookie', [`access_token=${expiredToken}`]);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('ACCESS_TOKEN_EXPIRED');
   });
 
   it('me returns the current user when authenticated', async () => {

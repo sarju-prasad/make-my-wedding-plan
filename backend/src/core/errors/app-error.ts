@@ -55,6 +55,18 @@ export class AppError extends Error {
     return new AppError({ code: ErrorCode.UNAUTHORIZED, httpStatus: 401, message });
   }
 
+  /**
+   * A 401, same as unauthorized(), but with a code the frontend can key off
+   * specifically — apiFetch's refresh-and-retry (lib/api.ts) must only
+   * fire for this exact case. A blanket "retry on any 401" also retried a
+   * logged-out visitor's GET /auth/me (missing cookie entirely, nothing to
+   * refresh), spending a POST /auth/refresh call — and a point off that
+   * route's shared per-IP rate limit — for free on every anonymous visit.
+   */
+  static accessTokenExpired(message = 'Your session has expired.'): AppError {
+    return new AppError({ code: ErrorCode.ACCESS_TOKEN_EXPIRED, httpStatus: 401, message });
+  }
+
   static forbidden(message = 'You do not have permission to perform this action.'): AppError {
     return new AppError({ code: ErrorCode.FORBIDDEN, httpStatus: 403, message });
   }

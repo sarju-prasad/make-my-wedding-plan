@@ -13,7 +13,7 @@
  * relative import, not the `#modules/*` alias `no-restricted-imports`
  * blocks) rather than reaching into auth.service.ts or auth.model.ts.
  */
-import { jwtVerify, SignJWT } from 'jose';
+import { errors as joseErrors, jwtVerify, SignJWT } from 'jose';
 
 import { env } from '#config/env.js';
 import { AppError } from '#core/errors/index.js';
@@ -48,7 +48,16 @@ export async function signRefreshToken(userId: string, tokenVersion: number): Pr
     .sign(refreshSecret);
 }
 
-/** Throws AppError.unauthorized() on an expired, malformed, or mis-signed token — never a raw jose error. */
+/**
+ * Throws AppError.accessTokenExpired() specifically for an expired token
+ * (jose's own errors.JWTExpired — verified directly it's thrown exactly for
+ * a lapsed `exp` claim, not any other verification failure), and
+ * AppError.unauthorized() for anything else (malformed, mis-signed,
+ * tampered) — never a raw jose error. The distinction matters to the one
+ * caller that needs it: middleware/authenticate.ts forwards whichever one
+ * this throws, and the frontend's apiFetch (lib/api.ts) only attempts a
+ * refresh-and-retry on the expired case specifically, not on every 401.
+ */
 export async function verifyAccessToken(token: string): Promise<AccessTokenPayload> {
   try {
     const { payload } = await jwtVerify(token, accessSecret, { algorithms: [ALG] });
@@ -58,6 +67,7 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenPaylo
     return { userId: payload.sub };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (error instanceof joseErrors.JWTExpired) throw AppError.accessTokenExpired();
     throw AppError.unauthorized();
   }
 }

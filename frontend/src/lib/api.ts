@@ -88,22 +88,6 @@ function hasWellFormedError(
 // mid-edit on a form). One shared in-flight refresh promise means N requests
 // that all 401 around the same moment trigger exactly one POST /auth/refresh,
 // not N of them.
-// A blanket "/auth/" prefix check here would also catch /auth/me — the
-// *one* call this entire mechanism exists for (it's how every page asks
-// "am I still logged in?", and its 401 is exactly "access token expired,
-// refresh token still good"). Only the endpoints where a 401 can't be
-// fixed by refreshing are excluded: login/register/forgot-password/
-// reset-password return 401 for a reason refreshing doesn't touch (no
-// session exists yet, or wrong credentials), and retrying them would just
-// waste a round trip before showing the same error. logout doesn't need
-// a session to begin with.
-const NO_REFRESH_RETRY_PATHS = new Set([
-  "/auth/register",
-  "/auth/login",
-  "/auth/logout",
-  "/auth/forgot-password",
-  "/auth/reset-password",
-]);
 let refreshPromise: Promise<boolean> | null = null;
 
 function refreshSession(): Promise<boolean> {
@@ -131,16 +115,6 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, isRetry = false
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection.");
   }
 
-  // `isRetry` caps this at one attempt — a 401 right after a successful
-  // refresh means something else is wrong, not a token that needs
-  // refreshing again.
-  if (res.status === 401 && !isRetry && !NO_REFRESH_RETRY_PATHS.has(path)) {
-    const refreshed = await refreshSession();
-    if (refreshed) {
-      return apiFetch<T>(path, init, true);
-    }
-  }
-
   // DELETE /weddings/:weddingId/members/:memberId (removeMember() below)
   // returns 204 — res.json() throws a SyntaxError on an empty body, which
   // would otherwise be misreported as a malformed response even though the
@@ -162,6 +136,27 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, isRetry = false
       throw new ApiError("INTERNAL_SERVER_ERROR", "The server returned a malformed response.");
     }
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection.");
+  }
+
+  // Keyed on the specific ACCESS_TOKEN_EXPIRED code, not "any 401" — a
+  // logged-out visitor's GET /auth/me 401s too (no cookie at all, nothing
+  // to refresh), but the backend only ever throws this exact code for a
+  // token that actually lapsed (auth.tokens.ts's verifyAccessToken).
+  // Retrying on every 401 regardless of cause spent a POST /auth/refresh
+  // call — and a point off that route's shared-per-IP rate limit — on
+  // every anonymous visit for free. `isRetry` caps this at one attempt — a
+  // 401 right after a successful refresh means something else is wrong,
+  // not a token that needs refreshing again.
+  if (
+    res.status === 401 &&
+    !isRetry &&
+    hasWellFormedError(raw) &&
+    raw.error.code === "ACCESS_TOKEN_EXPIRED"
+  ) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return apiFetch<T>(path, init, true);
+    }
   }
 
   if (!hasSuccessFlag(raw)) {

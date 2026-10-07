@@ -48,7 +48,7 @@ describe('envSchema', () => {
   // when computing the cookie's maxAge. Validating here against jose's
   // rules alone once let a value like "2 hours" pass at boot and then throw
   // at the first login/refresh, when parseDurationMs() actually ran.
-  it.each(['900', '2 hours', '1w', 'fifteen minutes', '15 minuts', '', 'tomorrow'])(
+  it.each(['900', '2 hours', '1w', '0s', '0m', 'fifteen minutes', '15 minuts', '', 'tomorrow'])(
     'rejects a malformed TTL: "%s"',
     (ttl) => {
       const result = envSchema.safeParse({ ...VALID_ENV, JWT_ACCESS_TTL: ttl });
