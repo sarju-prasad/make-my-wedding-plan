@@ -98,6 +98,7 @@ const invitationPreviewSchema = z.object({
   weddingName: z.string(),
   couple: z.object({ partnerOneName: z.string(), partnerTwoName: z.string() }),
   invitedByName: z.string(),
+  hasAccount: z.boolean(),
 });
 const invitationPreviewResponse = successEnvelope(
   'InvitationPreviewResponse',
@@ -329,7 +330,7 @@ registerModulePaths({
       operationId: 'postInvitationPreview',
       summary: 'Preview an invitation by its token',
       description:
-        'Public — no auth required, the same way /auth/reset-password works from a token alone. The token travels in the request body rather than the URL (unlike a typical "preview by ID" GET) so it never ends up written to access logs. Used to render the Accept Invitation page’s context (who invited you, to what wedding, as what role) before the visitor has necessarily signed in. Returns the invitation’s current status (including an already-expired/revoked/accepted one) rather than erroring — only a token matching no invitation at all is a 404.',
+        'Public — no auth required, the same way /auth/reset-password works from a token alone. The token travels in the request body rather than the URL (unlike a typical "preview by ID" GET) so it never ends up written to access logs. Used to render the Accept Invitation page’s context (who invited you, to what wedding, as what role, and via `hasAccount`, whether to prompt for sign-in or account creation) before the visitor has necessarily signed in. Returns the invitation’s current status (including an already-expired/revoked/accepted one) rather than erroring — only a token matching no invitation at all is a 404.',
       tags: ['Invitations'],
       requestBody: { content: { 'application/json': { schema: invitationTokenBodySchema } } },
       responses: {

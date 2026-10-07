@@ -35,16 +35,20 @@ describe('envSchema', () => {
     expect(result.error?.issues.some((i) => i.path.includes('JWT_REFRESH_SECRET'))).toBe(true);
   });
 
-  it.each(['15m', '7d', '2h', '2 hours', '30s', '1w'])('accepts a well-formed TTL: "%s"', (ttl) => {
+  it.each(['15m', '7d', '2h', '30s'])('accepts a well-formed TTL: "%s"', (ttl) => {
     const result = envSchema.safeParse({ ...VALID_ENV, JWT_ACCESS_TTL: ttl });
     expect(result.success).toBe(true);
   });
 
   // A bare number ("900", meaning seconds in many other systems' convention)
-  // is the realistic misconfiguration here — jose's setExpirationTime()
-  // requires an explicit unit for a string value, so this throws at
-  // runtime on the very first token signed, not at boot, without this check.
-  it.each(['900', 'fifteen minutes', '15 minuts', '', 'tomorrow'])(
+  // is one realistic misconfiguration; "2 hours"/"1w" are another, more
+  // subtle one — jose's own setExpirationTime() would accept both of those,
+  // but middleware/cookies.ts separately parses this same env value with
+  // utils/duration.ts's stricter parseDurationMs() (no spaces, no "w"/"y")
+  // when computing the cookie's maxAge. Validating here against jose's
+  // rules alone once let a value like "2 hours" pass at boot and then throw
+  // at the first login/refresh, when parseDurationMs() actually ran.
+  it.each(['900', '2 hours', '1w', 'fifteen minutes', '15 minuts', '', 'tomorrow'])(
     'rejects a malformed TTL: "%s"',
     (ttl) => {
       const result = envSchema.safeParse({ ...VALID_ENV, JWT_ACCESS_TTL: ttl });

@@ -51,6 +51,17 @@ export interface InvitationPreview {
   weddingName: string;
   couple: WeddingCouple;
   invitedByName: string;
+  /**
+   * Whether `email` already has an active account — the Accept Invitation
+   * page uses this to show only the relevant one of "Sign in"/"Create an
+   * account", instead of both with no signal about which applies. Without
+   * it, a first-time invitee naturally picks "Sign in" (listed first) and
+   * gets the generic invalid-credentials error, reading as "this is broken"
+   * rather than "you need to create an account first". Not a new
+   * enumeration vector: the caller already knows this exact email (it's
+   * the invitation's own `email`, shown back to them on the same page).
+   */
+  hasAccount: boolean;
 }
 
 export interface DeliverInvitationResult {
@@ -282,9 +293,10 @@ export async function previewInvitation(rawToken: string): Promise<InvitationPre
     throw AppError.notFound('This invitation link is invalid.', ErrorCode.INVITATION_NOT_FOUND);
   }
 
-  const [wedding, inviter] = await Promise.all([
+  const [wedding, inviter, invitedUser] = await Promise.all([
     Wedding.findById(invitation.weddingId).excludeArchived(),
     findUserById(String(invitation.invitedBy)),
+    findUserByEmail(invitation.email),
   ]);
 
   return {
@@ -296,6 +308,7 @@ export async function previewInvitation(rawToken: string): Promise<InvitationPre
     weddingName: wedding?.name ?? 'a wedding',
     couple: wedding?.couple ?? { partnerOneName: '', partnerTwoName: '' },
     invitedByName: inviter?.name ?? 'A wedding Admin',
+    hasAccount: invitedUser !== null,
   };
 }
 

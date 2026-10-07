@@ -188,6 +188,15 @@ export default function AcceptInvitationPage() {
 
   if (view === "not-signed-in") {
     const next = `/invitations/${token}`;
+    const signInHref = `/sign-in?next=${encodeURIComponent(next)}`;
+    const signUpHref = `/sign-up?next=${encodeURIComponent(next)}`;
+    // preview.hasAccount decides which action is primary — showing both
+    // sign-in and create-account with equal weight, with no signal about
+    // which one actually applies, meant a first-time invitee naturally hit
+    // "Sign in" (it was listed first) and got a generic invalid-credentials
+    // error instead of a clear "create an account first" path. The other
+    // action stays available as a small fallback link, in case our check is
+    // ever wrong for this person's actual situation.
     return (
       <AuthLayout
         title="You're invited"
@@ -195,19 +204,29 @@ export default function AcceptInvitationPage() {
       >
         <div className="flex flex-col gap-space-sm">
           <p className="font-body-sm text-body-sm text-center text-on-surface-variant">
-            Sign in or create an account with <strong>{preview.email}</strong> to accept.
+            {preview.hasAccount ? (
+              <>
+                Sign in with <strong>{preview.email}</strong> to accept.
+              </>
+            ) : (
+              <>
+                Create an account with <strong>{preview.email}</strong> to accept.
+              </>
+            )}
           </p>
           <Link
-            href={`/sign-in?next=${encodeURIComponent(next)}`}
+            href={preview.hasAccount ? signInHref : signUpHref}
             className="inline-flex items-center justify-center rounded-lg bg-primary-container px-space-lg py-space-sm font-label-lg text-label-lg text-on-primary transition-all hover:bg-secondary"
           >
-            Sign in to accept
+            {preview.hasAccount ? "Sign in to accept" : "Create an account to accept"}
           </Link>
           <Link
-            href={`/sign-up?next=${encodeURIComponent(next)}`}
-            className="inline-flex items-center justify-center rounded-lg bg-surface-container px-space-lg py-space-sm font-label-lg text-label-lg text-on-surface transition-all hover:bg-surface-container-high"
+            href={preview.hasAccount ? signUpHref : signInHref}
+            className="font-label-md text-label-md text-center text-on-surface-variant transition-colors hover:text-on-surface"
           >
-            Create an account to accept
+            {preview.hasAccount
+              ? "Don't have an account yet? Create one"
+              : "Already have an account? Sign in"}
           </Link>
         </div>
       </AuthLayout>

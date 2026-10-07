@@ -12,8 +12,9 @@
  * See .env.example for the annotated variable list.
  */
 import { config as loadDotenv } from 'dotenv';
-import { SignJWT } from 'jose';
 import { z } from 'zod';
+
+import { parseDurationMs } from '#utils/duration.js';
 
 // Vercel injects environment variables directly; a missing .env file locally is
 // not an error, so dotenv's own failure is deliberately ignored.
@@ -85,19 +86,27 @@ const corsOriginListSchema = z
   });
 
 /**
- * jose's SignJWT.setExpirationTime() parses its string argument immediately
- * (synchronously) and throws a TypeError for anything that doesn't match its
- * own duration grammar ("15m", "2 days", "1 week", a bare number of
- * seconds, etc.) — calling the real thing here, rather than re-implementing
- * its regex, means this can never drift from whatever the installed jose
- * version actually accepts. Without this, a malformed TTL (e.g. a typo, or
- * a bare unitless number someone assumed meant seconds) passes env
- * validation at boot and only surfaces as a 500 on the first login/refresh
- * that actually tries to sign a token with it.
+ * JWT_ACCESS_TTL/JWT_REFRESH_TTL/GUEST_SESSION_TTL are each parsed by TWO
+ * different, independent parsers downstream: jose's SignJWT.setExpirationTime()
+ * (auth.tokens.ts, signing the token itself) and this codebase's own
+ * hand-rolled parseDurationMs() (middleware/cookies.ts, computing the
+ * cookie's maxAge in milliseconds). jose's grammar is lenient ("2 hours",
+ * "1w", a bare number of seconds); parseDurationMs() is strict — exactly
+ * `\d+` immediately followed by a single s/m/h/d, nothing else (utils/
+ * duration.ts's own regex). A value like "1w" or "2 hours" passes jose fine
+ * but throws in parseDurationMs(), so validating against jose's rules alone
+ * (an earlier version of this check did exactly that) still let a TTL
+ * through that would 500 on the very first login or refresh, once the
+ * cookie-setting code tried to parse it.
+ *
+ * Validating with parseDurationMs() instead closes this: verified directly
+ * that everything its regex accepts ("15m", "7d", "2h", "30s", …) jose also
+ * accepts, so this is the strictly more conservative — and sufficient —
+ * check for both consumers at once, not just a different one.
  */
-function isValidJoseExpiration(value: string): boolean {
+function isValidDuration(value: string): boolean {
   try {
-    new SignJWT({}).setExpirationTime(value);
+    parseDurationMs(value);
     return true;
   } catch {
     return false;
@@ -194,11 +203,11 @@ export const envSchema = z
     // regardless, and this is where it should fail: at boot, not on the
     // first login/refresh that tries to sign a token with it.
     for (const key of ['JWT_ACCESS_TTL', 'JWT_REFRESH_TTL', 'GUEST_SESSION_TTL'] as const) {
-      if (!isValidJoseExpiration(env[key])) {
+      if (!isValidDuration(env[key])) {
         ctx.addIssue({
           code: 'custom',
           path: [key],
-          message: `${key}="${env[key]}" is not a valid duration (e.g. "15m", "7d", "2 hours").`,
+          message: `${key}="${env[key]}" is not a valid duration (e.g. "15m", "7d", "2h", "30s").`,
         });
       }
     }

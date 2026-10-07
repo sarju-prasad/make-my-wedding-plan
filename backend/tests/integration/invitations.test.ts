@@ -505,7 +505,20 @@ describe('POST /api/v1/invitations/preview', () => {
       weddingName: VALID_WEDDING.name,
       couple: VALID_WEDDING.couple,
       invitedByName: adminName,
+      hasAccount: false,
     });
+  });
+
+  it('reports hasAccount: true when the invited email already has an account', async () => {
+    const { cookies: admin } = await registerUser();
+    const weddingId = await createWedding(admin);
+    const { email: inviteeEmail } = await registerUser();
+    const { token } = await invite(admin, weddingId, inviteeEmail, 'MANAGER');
+
+    const res = await previewInvite(token);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.invitation.hasAccount).toBe(true);
   });
 
   it('returns 404 for a bogus token', async () => {

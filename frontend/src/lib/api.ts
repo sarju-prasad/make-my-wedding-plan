@@ -88,7 +88,22 @@ function hasWellFormedError(
 // mid-edit on a form). One shared in-flight refresh promise means N requests
 // that all 401 around the same moment trigger exactly one POST /auth/refresh,
 // not N of them.
-const AUTH_PATH_PREFIX = "/auth/";
+// A blanket "/auth/" prefix check here would also catch /auth/me — the
+// *one* call this entire mechanism exists for (it's how every page asks
+// "am I still logged in?", and its 401 is exactly "access token expired,
+// refresh token still good"). Only the endpoints where a 401 can't be
+// fixed by refreshing are excluded: login/register/forgot-password/
+// reset-password return 401 for a reason refreshing doesn't touch (no
+// session exists yet, or wrong credentials), and retrying them would just
+// waste a round trip before showing the same error. logout doesn't need
+// a session to begin with.
+const NO_REFRESH_RETRY_PATHS = new Set([
+  "/auth/register",
+  "/auth/login",
+  "/auth/logout",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+]);
 let refreshPromise: Promise<boolean> | null = null;
 
 function refreshSession(): Promise<boolean> {
@@ -116,12 +131,10 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, isRetry = false
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection.");
   }
 
-  // Auth endpoints are excluded: a stale/absent session can't be fixed by
-  // refreshing it, and retrying a wrong-password /auth/login would just
-  // waste a round trip before showing the same error. `isRetry` caps this at
-  // one attempt — a 401 right after a successful refresh means something
-  // else is wrong, not a token that needs refreshing again.
-  if (res.status === 401 && !isRetry && !path.startsWith(AUTH_PATH_PREFIX)) {
+  // `isRetry` caps this at one attempt — a 401 right after a successful
+  // refresh means something else is wrong, not a token that needs
+  // refreshing again.
+  if (res.status === 401 && !isRetry && !NO_REFRESH_RETRY_PATHS.has(path)) {
     const refreshed = await refreshSession();
     if (refreshed) {
       return apiFetch<T>(path, init, true);
@@ -457,6 +470,8 @@ export interface InvitationPreview {
   weddingName: string;
   couple: { partnerOneName: string; partnerTwoName: string };
   invitedByName: string;
+  /** Whether `email` already has an account — the Accept Invitation page uses this to show only the relevant "Sign in" or "Create an account" action. */
+  hasAccount: boolean;
 }
 
 /**
