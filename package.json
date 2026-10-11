@@ -1,0 +1,27 @@
+{
+  "name": "make-my-wedding-plan",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Make My Wedding Plan — monorepo root. backend/ is the Node/Express/TypeScript/MongoDB API; frontend/ is the Next.js app.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "build:backend": "npm run build --workspace=backend",
+    "test:backend": "npm run test --workspace=backend",
+    "verify:backend": "npm run verify --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "lint:frontend": "npm run lint --workspace=frontend",
+    "verify:frontend": "npm run verify --workspace=frontend",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1"
+  }
+}
