@@ -12,7 +12,12 @@
  * healthRouter.
  *
  * vercel.json routes every request here via a catch-all rewrite.
+ *
+ * Imported through the #* alias, not ../src: in production that resolves to
+ * the compiled ./dist (vercel.json bundles it via includeFiles), the same copy
+ * every other module loads, so the function never runs a second, uncompiled
+ * module graph from src/.
  */
-import { createApp } from '../src/app.js';
+import { createApp } from '#app.js';
 
 export default createApp();
