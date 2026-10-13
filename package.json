@@ -16,7 +16,7 @@
     "build:frontend": "npm run build --workspace=frontend",
     "lint:frontend": "npm run lint --workspace=frontend",
     "verify:frontend": "npm run verify --workspace=frontend",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
